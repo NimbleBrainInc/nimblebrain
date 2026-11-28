@@ -115,8 +115,6 @@ export interface Attachment {
   filename: string;
   mimeType: string;
   bytes: Uint8Array;
-  /** The text the model should receive from it, if it is a text-bearing kind. */
-  marker?: string;
 }
 
 function docx(text: string): Uint8Array {
@@ -176,21 +174,18 @@ export const ATTACHMENTS: Record<"txt" | "csv" | "docx" | "xlsx" | "pdf" | "png"
     filename: "notes.txt",
     mimeType: "text/plain",
     bytes: text(`hello ${MARK.txt}\n`),
-    marker: MARK.txt,
   },
   csv: {
     filename: "table.csv",
     mimeType: "text/csv",
     bytes: text(`name,value\n${MARK.csv},1\n`),
-    marker: MARK.csv,
   },
-  docx: { filename: "doc.docx", mimeType: DOCX_MIME, bytes: docx(MARK.docx), marker: MARK.docx },
-  xlsx: { filename: "sheet.xlsx", mimeType: XLSX_MIME, bytes: xlsx(MARK.xlsx), marker: MARK.xlsx },
+  docx: { filename: "doc.docx", mimeType: DOCX_MIME, bytes: docx(MARK.docx) },
+  xlsx: { filename: "sheet.xlsx", mimeType: XLSX_MIME, bytes: xlsx(MARK.xlsx) },
   pdf: {
     filename: "paper.pdf",
     mimeType: "application/pdf",
     bytes: pdf(MARK.pdf),
-    marker: MARK.pdf,
   },
   png: { filename: "dot.png", mimeType: "image/png", bytes: PNG },
 };

@@ -1,7 +1,8 @@
 /**
  * How the end-to-end suite (`test/e2e/suite.ts`) grades a run: a failing
  * check fails its scenario and the run, a scenario that throws or checks
- * nothing fails the run, and `--smoke` selects only the smoke group.
+ * nothing fails the run, a run that passes nothing fails, `--smoke` selects
+ * only the smoke group, and an `--only` prefix that selects nothing is refused.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -30,6 +31,7 @@ function target(): Target {
     kind: "in-process",
     baseUrl: `http://localhost:${server.port}`,
     alice: { name: "alice", token: "t" },
+    expectCatalog: false,
     capabilities: new Set(),
     close: async () => {},
   };
@@ -100,6 +102,12 @@ describe("grading", () => {
     expect(isClean(report)).toBe(false);
   });
 
+  test("a run that selected nothing fails", async () => {
+    const report = await runSuite({ target: target(), scenarios: [] });
+    expect(report.scenarios).toEqual([]);
+    expect(isClean(report)).toBe(false);
+  });
+
   test("a run with a skip beside a pass is clean", async () => {
     const report = await runSuite({
       target: target(),
@@ -125,6 +133,15 @@ describe("selecting", () => {
     const chat = selectScenarios(SCENARIOS, { only: ["chat."] });
     expect(chat.length).toBeGreaterThan(0);
     expect(chat.every((s) => s.id.startsWith("chat."))).toBe(true);
+  });
+
+  test("an --only prefix that selects nothing is refused, naming it", () => {
+    expect(() => selectScenarios(SCENARIOS, { only: ["chat.", "no-such"] })).toThrow(
+      "--only no-such matches no scenario",
+    );
+    expect(() => selectScenarios(SCENARIOS, { group: "smoke", only: ["tasks.batch"] })).toThrow(
+      "--only tasks.batch matches no scenario in the smoke group",
+    );
   });
 
   test("the smoke scenarios run against any target: none needs the scripted model or a fixture", () => {

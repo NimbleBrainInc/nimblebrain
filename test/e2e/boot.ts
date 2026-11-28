@@ -31,11 +31,10 @@ export interface Booted {
   baseUrl: string;
   /** The catalog fixture's artifact server. */
   catalogBase: string;
-  workDir: string;
   stop(): Promise<void>;
 }
 
-export async function bootRuntime(opts: { port?: number } = {}): Promise<Booted> {
+export async function bootRuntime(): Promise<Booted> {
   const workDir = mkdtempSync(join(tmpdir(), "nb-e2e-"));
   const catalog = startCatalogFixture(workDir);
   const runtime = await Runtime.start({
@@ -55,12 +54,11 @@ export async function bootRuntime(opts: { port?: number } = {}): Promise<Booted>
   // after, since a test process shares its environment across files.
   const chatLimit = process.env.NB_CHAT_RATE_LIMIT;
   process.env.NB_CHAT_RATE_LIMIT = chatLimit ?? "1000";
-  const server = startServer({ runtime, port: opts.port ?? 0, hostname: "127.0.0.1" });
+  const server = startServer({ runtime, port: 0, hostname: "127.0.0.1" });
   if (chatLimit === undefined) delete process.env.NB_CHAT_RATE_LIMIT;
   return {
     baseUrl: `http://127.0.0.1:${server.port}`,
     catalogBase: catalog.base,
-    workDir,
     async stop() {
       server.stop(true);
       await runtime.shutdown();

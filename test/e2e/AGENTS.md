@@ -18,11 +18,17 @@ deployment after it deploys.
   test:e2e --smoke` after a deploy; drop `--smoke` for every scenario the deployment can serve.
   `E2E_TOKEN_B` adds the second person (`second-identity`); `E2E_CATALOG_BASE` names the
   fixture catalog's artifact server where one is configured.
-- `--only chat,files` (or `E2E_ONLY`) picks scenarios by id prefix. The report is
-  `.cache/e2e/<label>.json` (`E2E_REPORT`, `E2E_LABEL`).
+- `--only chat,files` (or `E2E_ONLY`) picks scenarios by id prefix; a prefix that selects
+  nothing is refused, naming it, since a mistyped filter would otherwise test nothing. The
+  report is `.cache/e2e/<label>.json` (`E2E_REPORT`, `E2E_LABEL`).
 - **The exit code is the verdict.** It is non-zero when a check fails, a scenario throws or
-  runs no check, the run leaves a workspace behind, or every selected scenario is skipped. A
-  failing e2e test fails; a known bug is an issue, never an exception the suite carries.
+  runs no check, the run leaves something behind, or no scenario passes (nothing selected,
+  or every one skipped): a run that passed nothing proves nothing. A failing e2e test
+  fails; a known bug is an issue, never an exception the suite carries.
+- **`catalogs.browse` asserts only what holds on every deployment:** Browse answers, and
+  each row it lists has a name and an address. A deployment may configure no catalog, so an
+  empty listing passes unless the operator states one is expected with
+  `E2E_EXPECT_CATALOG=1`; in-process it is always expected (the fixture catalog).
 
 ## Rules
 
@@ -49,8 +55,12 @@ A deployment's workspaces are real and every scenario writes, so:
   scenario is skipped with that reason, and the run fails.
 - **A scenario that creates a workspace calls `t.disposable(ws)` as soon as it exists**; the
   suite deletes and purges it when the scenario ends.
-- **A change to the person rather than a workspace** (a preference) is put back in the
-  scenario's own `finally`.
+- **A change to the person rather than a workspace** (a preference) is made inside the
+  scenario's `try` and put back in its `finally`, and the restore is proven by reading the
+  value back. A restore that fails or does not read back goes to `t.leftBehind(why)`, which
+  lists it in the report's `leftBehind` beside workspaces, failing the run. No public
+  interface unsets a timezone, so `tasks.authoring` can restore only a set one; the
+  in-process people are provisioned with `UTC`.
 - **A workspace is gone only when its purge succeeds, or successful listings (live and
   deleted) lack it.** Any other answer lists it in the report's `leftBehind`, which fails the run.
 - In-process runs use each person's first workspace of a throwaway work directory.

@@ -31,18 +31,23 @@ interface SkillRow {
   source?: unknown;
 }
 
+/**
+ * A deployment may configure no catalog, so an empty listing is a valid
+ * answer; only a target that expects items (`expectCatalog`) requires one.
+ */
 export const catalogsBrowse: Scenario = {
   id: "catalogs.browse",
-  title: "Browse lists the catalogs' items",
+  title: "Browse answers, and every row it lists is well-formed",
   groups: ["smoke"],
   async run(t) {
-    await t.check("list_directory answers the listed items, each with an address", async () => {
+    await t.check("list_directory answers, each row with a name and an address", async () => {
       const dir = await t.client.tool(t.alice, t.ws, "nb__manage_connectors", {
         action: "list_directory",
       });
       expect(!dir.isError, "answered", textOf(dir).slice(0, 300));
       const rows = structured<{ entries?: Row[] }>(dir).entries;
-      expect(Array.isArray(rows) && rows.length > 0, "listed items", structured(dir));
+      expect(Array.isArray(rows), "a list of entries", structured(dir));
+      if (t.expectCatalog) expect(rows.length > 0, "listed items", structured(dir));
       expect(
         rows.every((r) => typeof r.name === "string" && typeof r.address === "string"),
         "each row has a name and an address",

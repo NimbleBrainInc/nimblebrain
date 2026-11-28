@@ -9,12 +9,15 @@
  * `--only chat,files` (or `E2E_ONLY`) runs the scenarios whose id starts with
  * one of those prefixes. `E2E_REPORT` names the report file (default
  * `.cache/e2e/<label>.json`). The exit code is non-zero when a scenario fails
- * or throws, the run leaves a workspace behind, or every selected scenario is skipped.
+ * or throws, the run leaves something behind, or no scenario passes; a
+ * prefix that selects nothing exits non-zero before the run starts.
+ * `E2E_EXPECT_CATALOG=1` states that the deployment's Browse lists items.
  */
 
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { THIS_TREE } from "./boot.ts";
+import type { Scenario } from "./scenario.ts";
 import { SCENARIOS } from "./scenarios/index.ts";
 import { isClean, type Report, runSuite, selectScenarios, targetFromEnv } from "./suite.ts";
 
@@ -32,10 +35,16 @@ function onlyPrefixes(): string[] | undefined {
 
 async function main(): Promise<number> {
   const only = onlyPrefixes();
-  const scenarios = selectScenarios(SCENARIOS, {
-    ...(args.includes("--smoke") ? { group: "smoke" as const } : {}),
-    ...(only ? { only } : {}),
-  });
+  let scenarios: Scenario[];
+  try {
+    scenarios = selectScenarios(SCENARIOS, {
+      ...(args.includes("--smoke") ? { group: "smoke" as const } : {}),
+      ...(only ? { only } : {}),
+    });
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
   const target = await targetFromEnv(env);
   let report: Report;
   try {

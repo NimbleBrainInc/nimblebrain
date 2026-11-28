@@ -2,7 +2,9 @@
  * The people a booted runtime knows, each signed in by a bearer token.
  *
  * `alice` is an org admin, `bob` an org member. Each is provisioned in the
- * runtime's user store on first use, as a production provider's users are.
+ * runtime's user store on first use, as a production provider's users are,
+ * with a timezone set: a scenario that changes it can write a set one back,
+ * and no public interface unsets one.
  */
 
 import type {
@@ -39,6 +41,8 @@ export const BOB: Person = {
   token: "e2e-token-bob",
 };
 
+const PEOPLE: readonly Person[] = [ALICE, BOB];
+
 /** First-party grant: a signed-in person of this deployment. */
 const FIRST_PARTY: TokenGrant = { kind: "first_party" };
 
@@ -52,15 +56,12 @@ export class TokenIdentityProvider implements IdentityProvider {
 
   private readonly seeded = new Map<string, Promise<void>>();
 
-  constructor(
-    private readonly userStore: UserStore,
-    private readonly people: readonly Person[] = [ALICE, BOB],
-  ) {}
+  constructor(private readonly userStore: UserStore) {}
 
   async verifyRequest(req: Request): Promise<VerifiedIdentity | null> {
     const header = req.headers.get("authorization");
     if (!header?.startsWith("Bearer ")) return null;
-    const person = this.people.find((p) => p.token === header.slice(7));
+    const person = PEOPLE.find((p) => p.token === header.slice(7));
     if (!person) return null;
     await this.seed(person);
     const stored = await this.userStore.get(person.id).catch(() => null);
@@ -84,6 +85,7 @@ export class TokenIdentityProvider implements IdentityProvider {
           email: person.email,
           displayName: person.displayName,
           orgRole: person.orgRole,
+          preferences: { timezone: "UTC" },
         });
       })();
       this.seeded.set(person.id, pending);

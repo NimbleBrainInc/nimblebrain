@@ -19,7 +19,7 @@ import type {
   LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 
-/** One tool call a step makes. Strings in `args` may hold `{{…}}` placeholders. */
+/** One tool call a step makes. Strings in `args` may hold `{{timezone}}`. */
 export interface DirectiveCall {
   tool: string;
   args: Record<string, unknown>;
@@ -130,52 +130,17 @@ function rounds(prompt: LanguageModelV4Prompt, userAt: number): Round[] {
   return out;
 }
 
-/** The first value under `key` anywhere in `value`, looking inside JSON strings too. */
-function findKey(value: unknown, key: string, depth = 0): unknown {
-  if (depth > 12 || value === null || value === undefined) return undefined;
+/** Fill `{{timezone}}` placeholders from the system prompt's `Timezone:` line. */
+function fill(value: unknown, system: string): unknown {
   if (typeof value === "string") {
-    if (!value.startsWith("{") && !value.startsWith("[")) return undefined;
-    try {
-      return findKey(JSON.parse(value), key, depth + 1);
-    } catch {
-      return undefined;
-    }
+    return value.replace(
+      /\{\{timezone\}\}/g,
+      () => /Timezone: ([^\n]+)/.exec(system)?.[1]?.trim() ?? "",
+    );
   }
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const hit = findKey(v, key, depth + 1);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
-  }
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if (key in record && record[key] !== undefined) return record[key];
-    for (const v of Object.values(record)) {
-      const hit = findKey(v, key, depth + 1);
-      if (hit !== undefined) return hit;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Fill placeholders: `{{timezone}}` from the system prompt's `Timezone:` line,
- * `{{last:<key>}}` from the previous round's results.
- */
-function fill(value: unknown, ctx: { system: string; last: unknown[] }): unknown {
-  if (typeof value === "string") {
-    const whole = /^\{\{last:([A-Za-z0-9_]+)\}\}$/.exec(value);
-    if (whole?.[1]) return findKey(ctx.last, whole[1]);
-    return value
-      .replace(/\{\{timezone\}\}/g, () => /Timezone: ([^\n]+)/.exec(ctx.system)?.[1]?.trim() ?? "")
-      .replace(/\{\{last:([A-Za-z0-9_]+)\}\}/g, (_, k: string) =>
-        String(findKey(ctx.last, k) ?? ""),
-      );
-  }
-  if (Array.isArray(value)) return value.map((v) => fill(v, ctx));
+  if (Array.isArray(value)) return value.map((v) => fill(v, system));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, ctx)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, system)]));
   }
   return value;
 }
@@ -226,7 +191,7 @@ function plan(options: LanguageModelV4CallOptions): {
   const index = advanced.length;
   const step = steps[index];
   if (step) {
-    const ctx = { system: systemText(prompt), last: advanced.at(-1)?.results ?? [] };
+    const system = systemText(prompt);
     const salt = `${userAt}-${done.length}${last?.held ? "h" : ""}`;
     return {
       planned: {
@@ -234,7 +199,7 @@ function plan(options: LanguageModelV4CallOptions): {
         calls: step.map((c, i) => ({
           id: `e2e-${salt}-${i}`,
           tool: c.tool,
-          input: JSON.stringify(fill(c.args, ctx)),
+          input: JSON.stringify(fill(c.args, system)),
         })),
       },
       usage: d.usage,

@@ -40,6 +40,8 @@ export interface ScenarioContext {
   bobWs?: string;
   /** The fixture catalog's artifact server, under `fixture-catalog`. */
   catalogBase?: string;
+  /** Browse must list at least one item on this target. */
+  expectCatalog: boolean;
   /** One assertion: `fn` throws on a wrong result; what it returns is kept as the evidence. */
   check(label: string, fn: () => unknown | Promise<unknown>): Promise<void>;
   /** A value for later steps, kept with the scenario's evidence. */
@@ -49,6 +51,12 @@ export interface ScenarioContext {
    * scenario ends, failed or not. Register it as soon as it exists.
    */
   disposable(ws: string): void;
+  /**
+   * Something the scenario changed outside its workspaces and could not put
+   * back (a person's preference), with why: listed in the report's
+   * `leftBehind`, which fails the run.
+   */
+  leftBehind(why: string): void;
 }
 
 export interface Scenario {

@@ -26,6 +26,8 @@ export interface Target {
   alice: Caller;
   bob?: Caller;
   catalogBase?: string;
+  /** Browse must list at least one item: the fixture catalog's, or an operator's `E2E_EXPECT_CATALOG=1`. */
+  expectCatalog: boolean;
   capabilities: ReadonlySet<Capability>;
   close(): Promise<void>;
 }
@@ -42,6 +44,7 @@ export async function inProcessTarget(): Promise<Target> {
     alice: { name: "alice", token: ALICE.token },
     bob: { name: "bob", token: BOB.token },
     catalogBase: booted.catalogBase,
+    expectCatalog: true,
     capabilities: new Set(ALL),
     close: () => booted.stop(),
   };
@@ -66,6 +69,7 @@ export function deploymentTarget(env: Record<string, string | undefined>): Targe
     alice: { name: "alice", token: env.E2E_TOKEN },
     ...(env.E2E_TOKEN_B ? { bob: { name: "bob", token: env.E2E_TOKEN_B } } : {}),
     ...(env.E2E_CATALOG_BASE ? { catalogBase: env.E2E_CATALOG_BASE } : {}),
+    expectCatalog: env.E2E_EXPECT_CATALOG === "1",
     capabilities,
     close: async () => {},
   };
@@ -84,16 +88,20 @@ export function targetFromEnv(
 /**
  * The scenarios a run takes: those in `group` when one is named, then those
  * whose id starts with one of `only`'s prefixes when given. No filter: all.
+ * A prefix that selects nothing is a mistyped filter, so it throws, naming it.
  */
 export function selectScenarios(
   all: Scenario[],
   opts: { group?: Group; only?: string[] } = {},
 ): Scenario[] {
-  return all.filter(
-    (s) =>
-      (!opts.group || (s.groups ?? []).includes(opts.group)) &&
-      (!opts.only?.length || opts.only.some((p) => s.id.startsWith(p))),
-  );
+  const inGroup = all.filter((s) => !opts.group || (s.groups ?? []).includes(opts.group));
+  const only = opts.only ?? [];
+  const unmatched = only.filter((p) => !inGroup.some((s) => s.id.startsWith(p)));
+  if (unmatched.length > 0) {
+    const where = opts.group ? ` in the ${opts.group} group` : "";
+    throw new Error(`--only ${unmatched.join(",")} matches no scenario${where}`);
+  }
+  return inGroup.filter((s) => only.length === 0 || only.some((p) => s.id.startsWith(p)));
 }
 
 // ── The report ──────────────────────────────────────────────────────────────
@@ -122,19 +130,21 @@ export interface Report {
   durationMs: number;
   summary: Record<ScenarioStatus, number>;
   scenarios: ScenarioResult[];
-  /** Workspaces the run created and could not delete and purge, with why. */
+  /**
+   * What the run changed and could not put back, with why: a workspace it
+   * could not delete and purge, a person's preference it could not restore.
+   */
   leftBehind: string[];
 }
 
 /**
- * A run passes when no scenario failed or threw, nothing the run created is
- * left, and something ran: a run that skips every scenario it selected (a
- * deployment token without org-admin) proves nothing.
+ * A run passes when no scenario failed or threw, nothing the run changed is
+ * left, and at least one scenario passed: a run that passed none (nothing
+ * selected, or every scenario skipped) proves nothing.
  */
 export function isClean(report: Report): boolean {
-  const { fail, errored, skip } = report.summary;
-  const allSkipped = report.scenarios.length > 0 && skip === report.scenarios.length;
-  return fail === 0 && errored === 0 && report.leftBehind.length === 0 && !allSkipped;
+  const { pass, fail, errored } = report.summary;
+  return pass > 0 && fail === 0 && errored === 0 && report.leftBehind.length === 0;
 }
 
 // ── Running ─────────────────────────────────────────────────────────────────
@@ -280,11 +290,16 @@ export async function runSuite(opts: RunOptions): Promise<Report> {
         ws,
         ...(bobWs ? { bobWs } : {}),
         ...(target.catalogBase ? { catalogBase: target.catalogBase } : {}),
+        expectCatalog: target.expectCatalog,
         note: (key, value) => {
           notes[key] = compact(value, 400);
         },
         disposable: (id) => {
           owned.push(id);
+        },
+        leftBehind: (why) => {
+          leftBehind.push(why);
+          log(`  LEFT BEHIND ${why}`);
         },
         async check(label, fn) {
           const c0 = Date.now();
