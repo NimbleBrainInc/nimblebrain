@@ -8,8 +8,8 @@
  * lookup leaks nothing about the secret. The text is compared, not its decoded bytes: a
  * decoder ignores a character's unused low bits, padding and trailing junk, so other
  * spellings of a secret decode to its bytes, and only the URL issued is a capability.
- * Grants live in this process only: a restart kills every URL,
- * which the contract allows (an open upload then expires; a host resolves again). Every
+ * Grants live in this process only, as open uploads do: a restart kills every URL
+ * and every open upload with it (a host begins again, or resolves again). Every
  * request that is not a live grant's one operation, whatever it names, is answered alike:
  * 404, empty, no CORS headers. Nothing here logs a request, so a token never reaches a log.
  */
@@ -172,10 +172,8 @@ export class Transfers {
    */
   async #upload(grant: Grant, req: Request): Promise<Response> {
     const { store } = this.#opts;
-    const upload = store.view(grant.workspaceId, (s) =>
-      Object.hasOwn(s.uploads, grant.target) ? s.uploads[grant.target] : undefined,
-    );
-    if (!upload || upload.completed || upload.ownerId !== grant.ownerId) return NOT_FOUND();
+    const upload = store.upload(grant.workspaceId, grant.target);
+    if (!upload || upload.ownerId !== grant.ownerId) return NOT_FOUND();
     const target = store.uploadTarget(grant.workspaceId, upload.id);
     const fd = openSync(target.tmp, "w");
     let written = 0;
@@ -196,8 +194,7 @@ export class Transfers {
       fsyncSync(fd);
       closeSync(fd);
       closed = true;
-      const still = store.view(grant.workspaceId, (s) => s.uploads[upload.id]);
-      if (!still || still.completed) {
+      if (!store.upload(grant.workspaceId, upload.id)) {
         target.abandon();
         return NOT_FOUND();
       }

@@ -1,8 +1,8 @@
 /**
  * The plugin's storage on the local filesystem, one directory per workspace:
  *
- *   <data>/workspaces/<workspaceId>/state.json        every owner's file and folder records and
- *                                                      open or recently completed uploads
+ *   <data>/workspaces/<workspaceId>/state.json        every owner's file and folder records, and
+ *                                                      each upload completed within its window
  *   <data>/workspaces/<workspaceId>/bodies/<fileId>    a file's body, written once
  *   <data>/workspaces/<workspaceId>/uploads/<uploadId> the body last PUT to an open upload
  *
@@ -22,6 +22,10 @@
  *   none, and a repeated PUT replaces the earlier one. Completion hard-links the upload's
  *   body into `bodies/` (no copy, no window where neither name holds it), commits, then
  *   unlinks the upload's name.
+ * - **An open upload lives in memory only.** Its URL lives only in this process, so a record
+ *   of it on disk could outlive every way to send it a body: `begin_upload` writes nothing,
+ *   and `complete_upload` is the upload's one commit. A workspace's first load in a process
+ *   removes every upload body, since no open upload survives the process that opened it.
  * - **One process owns a data directory.** State reads and writes are synchronous, so the
  *   calls of one process never interleave; two processes on one directory are not
  *   serialized. The workspace id is the only path segment taken from a call; every other
@@ -80,10 +84,7 @@ export interface FolderRow {
   createdAt: string;
 }
 
-/**
- * An upload `begin_upload` opened; `completed` once `complete_upload` made its file, holding
- * the file record that call answered, which a repeat answers again (CONTRACT.md §12).
- */
+/** An upload `begin_upload` opened and no call has completed: held in memory only. */
 export interface UploadRow {
   id: string;
   ownerId: string;
@@ -98,16 +99,28 @@ export interface UploadRow {
   runId: string | null;
   /** When its URL stops accepting a PUT, epoch ms. */
   expiresAt: number;
-  completed?: { fileId: string; file: Record<string, unknown> };
+}
+
+/**
+ * An upload `complete_upload` completed, kept while a repeat may come (CONTRACT.md §12). A
+ * repeat answers the first record unchanged: the file's row with the fields a later call can
+ * change (`tag` its tags, `move` its folder) as they were when the upload completed.
+ */
+export interface CompletedUpload {
+  fileId: string;
+  /** The upload URL's `expiresAt`, epoch ms: the completion window runs from it. */
+  expiresAt: number;
+  tags: string[];
+  folderId: string | null;
 }
 
 export interface WorkspaceState {
   files: Record<string, FileRow>;
   folders: Record<string, FolderRow>;
-  uploads: Record<string, UploadRow>;
+  completed: Record<string, CompletedUpload>;
 }
 
-const emptyState = (): WorkspaceState => ({ files: {}, folders: {}, uploads: {} });
+const emptyState = (): WorkspaceState => ({ files: {}, folders: {}, completed: {} });
 
 /** A fresh id under this plugin's grammar (`^[a-z0-9][a-z0-9_-]{0,63}$`), 96 random bits. */
 export function mintId(prefix: "fl" | "fd" | "up"): string {
@@ -130,6 +143,8 @@ export interface Tx {
 export class Store {
   readonly #root: string;
   readonly #cache = new Map<string, WorkspaceState>();
+  /** Each workspace's open uploads, by id: kept apart from the state, which never holds them. */
+  readonly #open = new Map<string, Map<string, UploadRow>>();
   /** The workspaces whose leftovers this process has removed: once each, before any PUT. */
   readonly #recovered = new Set<string>();
 
@@ -157,9 +172,51 @@ export class Store {
     return fn(this.#load(workspaceId));
   }
 
-  /** The workspaces loaded in this process. */
-  loaded(): string[] {
-    return [...this.#cache.keys()];
+  /** Open an upload: in memory, after the workspace's leftovers are removed. */
+  openUpload(workspaceId: string, upload: UploadRow): void {
+    this.#load(workspaceId);
+    const open = this.#open.get(workspaceId) ?? new Map<string, UploadRow>();
+    open.set(segment(upload.id), upload);
+    this.#open.set(workspaceId, open);
+  }
+
+  /** The open upload `uploadId` names, or undefined. */
+  upload(workspaceId: string, uploadId: string): UploadRow | undefined {
+    return this.#open.get(workspaceId)?.get(uploadId);
+  }
+
+  /** Forget an open upload: its call committed its file. */
+  closeUpload(workspaceId: string, uploadId: string): void {
+    const open = this.#open.get(workspaceId);
+    open?.delete(uploadId);
+    if (open?.size === 0) this.#open.delete(workspaceId);
+  }
+
+  /**
+   * Retire the uploads `stale` refuses by their `expiresAt`: an open one with its bytes, a
+   * completed one from memory. A completed one leaves `state.json` with the next commit; until
+   * then a repeat for it is refused by its window, so retiring commits nothing of its own.
+   */
+  retireUploads(workspaceId: string, stale: (expiresAt: number) => boolean): void {
+    const open = this.#open.get(workspaceId);
+    for (const upload of open?.values() ?? []) {
+      if (!stale(upload.expiresAt)) continue;
+      open?.delete(upload.id);
+      removeUploadFiles(this.#dir(workspaceId), upload.id);
+    }
+    if (open?.size === 0) this.#open.delete(workspaceId);
+    const state = this.#cache.get(workspaceId);
+    for (const [id, done] of Object.entries(state?.completed ?? {})) {
+      if (stale(done.expiresAt)) delete state?.completed[id];
+    }
+  }
+
+  /**
+   * The workspaces holding anything to retire: each loaded one, and each with an open upload.
+   * An open upload outlives its workspace's eviction from the cache, so it is found on its own.
+   */
+  held(): string[] {
+    return [...new Set([...this.#cache.keys(), ...this.#open.keys()])];
   }
 
   /** Where a file's body is, or null when it has none. */
@@ -200,6 +257,7 @@ export class Store {
   /** Remove every record, upload and body held for the workspace. */
   removeWorkspace(workspaceId: string): void {
     this.#cache.delete(workspaceId);
+    this.#open.delete(workspaceId);
     rmSync(this.#dir(workspaceId), { recursive: true, force: true });
   }
 
@@ -322,17 +380,15 @@ function atomicWrite(path: string, data: string | Buffer): void {
 
 /**
  * Remove what no committed record names: bodies of files the state does not hold (a crash
- * between writing a body and the commit, or between a commit and an unlink), an upload's
- * body once it is completed or gone, and every temporary file. It runs on a workspace's first
- * load in a process only: no PUT is in flight before then, since a PUT needs a token only a
- * loaded workspace issues.
+ * between writing a body and the commit, or between a commit and an unlink), every upload's
+ * body (no open upload outlives the process that opened it, and a completed one's body is
+ * already a file's), and every temporary file. It runs on a workspace's first load in a
+ * process only: no PUT is in flight before then, since a PUT needs a token only a loaded
+ * workspace issues.
  */
 function removeLeftovers(dir: string, state: WorkspaceState): void {
   removeUnless(join(dir, "bodies"), (file) => Object.hasOwn(state.files, file));
-  removeUnless(join(dir, "uploads"), (file) => {
-    const upload = Object.hasOwn(state.uploads, file) ? state.uploads[file] : undefined;
-    return upload !== undefined && !upload.completed;
-  });
+  removeUnless(join(dir, "uploads"), () => false);
   removeUnless(dir, (file) => !file.startsWith("state.json.tmp-"));
 }
 

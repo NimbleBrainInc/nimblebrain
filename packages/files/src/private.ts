@@ -74,9 +74,7 @@ export function beginUpload(env: PrivateEnv, caller: Caller, args: BeginArgs) {
     runId: caller.runId,
     expiresAt,
   };
-  env.store.mutate(caller.workspaceId, (tx) => {
-    tx.state.uploads[upload.id] = upload;
-  });
+  env.store.openUpload(caller.workspaceId, upload);
   return {
     uploadId: upload.id,
     url: env.transfers.issueUpload(caller.workspaceId, caller.ownerId, upload.id, expiresAt),
@@ -89,12 +87,19 @@ export function beginUpload(env: PrivateEnv, caller: Caller, args: BeginArgs) {
 const uploadNotFound = (id: string) =>
   privateError("upload_not_found", `no open upload ${id} in scope`);
 
-/** The upload `uploadId` names in the caller's scope and completion window, or a refusal. */
-function openUpload(state: WorkspaceState, caller: Caller, uploadId: string, now: number) {
-  const upload = Object.hasOwn(state.uploads, uploadId) ? state.uploads[uploadId] : undefined;
-  if (!upload || upload.ownerId !== caller.ownerId) throw uploadNotFound(uploadId);
-  if (now > upload.expiresAt + COMPLETION_GRACE_MS) throw uploadNotFound(uploadId);
-  return upload;
+const pastWindow = (expiresAt: number, now: number) => now > expiresAt + COMPLETION_GRACE_MS;
+
+/**
+ * A repeat's answer: the first `{ uri, file }`, rebuilt from the file's row with the fields
+ * kept from when the upload completed, while the file exists in the caller's scope.
+ */
+function repeatAnswer(state: WorkspaceState, caller: Caller, uploadId: string, now: number) {
+  const done = Object.hasOwn(state.completed, uploadId) ? state.completed[uploadId] : undefined;
+  if (!done || pastWindow(done.expiresAt, now)) return null;
+  const row = Object.hasOwn(state.files, done.fileId) ? state.files[done.fileId] : undefined;
+  if (!row || row.ownerId !== caller.ownerId) throw uploadNotFound(uploadId);
+  const first = { ...row, tags: done.tags, folderId: done.folderId };
+  return { uri: `files://${row.id}`, file: fileRecord(first, caller.workspaceId) };
 }
 
 /** The measured length of the upload's stored body, or `upload_incomplete`. */
@@ -111,14 +116,15 @@ function measured(env: PrivateEnv, workspaceId: string, upload: UploadRow): numb
 
 export function completeUpload(env: PrivateEnv, caller: Caller, args: { uploadId: string }) {
   const now = env.now();
-  const answer = env.store.mutate(caller.workspaceId, (tx) => {
-    const upload = openUpload(tx.state, caller, args.uploadId, now);
-    if (upload.completed) {
-      const { fileId, file } = upload.completed;
-      if (!Object.hasOwn(tx.state.files, fileId)) throw uploadNotFound(args.uploadId);
-      return { uri: `files://${fileId}`, file };
-    }
-    const size = measured(env, caller.workspaceId, upload);
+  const { workspaceId } = caller;
+  const repeat = env.store.view(workspaceId, (s) => repeatAnswer(s, caller, args.uploadId, now));
+  if (repeat) return repeat;
+  const upload = env.store.upload(workspaceId, args.uploadId);
+  if (!upload || upload.ownerId !== caller.ownerId || pastWindow(upload.expiresAt, now)) {
+    throw uploadNotFound(args.uploadId);
+  }
+  const size = measured(env, workspaceId, upload);
+  const answer = env.store.mutate(workspaceId, (tx) => {
     const createdAt = iso(now);
     const segments = upload.folder ? pathSegments("begin_upload", upload.folder) : [];
     const row: FileRow = {
@@ -135,14 +141,19 @@ export function completeUpload(env: PrivateEnv, caller: Caller, args: { uploadId
       description: upload.description,
       folderId: ensureFolderPath(tx.state, caller.ownerId, segments, createdAt),
     };
-    const file = fileRecord(row, caller.workspaceId);
     tx.state.files[row.id] = row;
-    tx.state.uploads[upload.id] = { ...upload, completed: { fileId: row.id, file } };
+    tx.state.completed[upload.id] = {
+      fileId: row.id,
+      expiresAt: upload.expiresAt,
+      tags: [...row.tags],
+      folderId: row.folderId,
+    };
     tx.adoptUploadBody(upload.id, row.id);
     tx.dropUploadBody(upload.id);
-    return { uri: `files://${row.id}`, file };
+    return { uri: `files://${row.id}`, file: fileRecord(row, workspaceId) };
   });
-  env.transfers.revokeUpload(caller.workspaceId, args.uploadId);
+  env.store.closeUpload(workspaceId, upload.id);
+  env.transfers.revokeUpload(workspaceId, upload.id);
   return answer;
 }
 
@@ -179,20 +190,9 @@ export function deleteWorkspace(env: PrivateEnv, caller: Pick<Caller, "workspace
 
 /**
  * Retire uploads past their completion window: an abandoned one with its bytes, a completed
- * one's repeatable answer. Commits only when there is something to retire.
+ * one's repeatable answer. Nothing is committed for it (`Store.retireUploads`).
  */
 export function sweepUploads(env: Env, workspaceId: string): void {
   const now = env.now();
-  const stale = env.store.view(workspaceId, (s) =>
-    Object.values(s.uploads)
-      .filter((u) => now > u.expiresAt + COMPLETION_GRACE_MS)
-      .map((u) => u.id),
-  );
-  if (stale.length === 0) return;
-  env.store.mutate(workspaceId, (tx) => {
-    for (const id of stale) {
-      delete tx.state.uploads[id];
-      tx.dropUploadBody(id);
-    }
-  });
+  env.store.retireUploads(workspaceId, (expiresAt) => pastWindow(expiresAt, now));
 }

@@ -233,8 +233,10 @@ a `files://` URI itself, which is always the host's.
   declared `size`, it fails `upload_incomplete` and the upload stays open until it expires.
   Its **completion window** runs until 300 seconds after `expiresAt`: within it, a body whose
   PUT began before `expiresAt` completes. An unknown or out-of-scope `uploadId`, or one past
-  that window, fails `upload_not_found`. The record's `size` is the measured length. A repeat
-  for a completed upload is §12.
+  that window, fails `upload_not_found`. The record's `size` is the measured length. An upload
+  is open only in the implementation that issued its URL: a restart of the implementation ends
+  every open upload, which then fails `upload_not_found`, and the host begins it again. A
+  repeat for a completed upload is §12, a restart notwithstanding.
 - **`resolve({ version, uris })`** answers, for each URI in the order asked, `{ uri, found:
   true, file, download: { url, expiresAt } }` when the URI names a file the context's owner may
   see in the workspace, and `{ uri, found: false }` otherwise. It is the one place visibility is

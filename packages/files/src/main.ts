@@ -104,7 +104,7 @@ function plugin(opts: PluginOptions, origin: () => string) {
   const transfers = new Transfers({ store, now, origin });
   const timer = setInterval(() => {
     transfers.sweep();
-    for (const ws of store.loaded()) {
+    for (const ws of store.held()) {
       try {
         sweepUploads({ store, now }, ws);
       } catch (err) {
