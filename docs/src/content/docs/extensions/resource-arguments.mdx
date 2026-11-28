@@ -171,6 +171,8 @@ The key is absent when the call has nothing to carry: the tool declares no resou
 
 The host reads a URI from the one server in the calling connection's workspace whose `resources/templates/list` has a template the URI expands from (RFC 6570). It is the same rule that finds the app to [open a URI](/apps/bridge/#ainimblebrainopen) in. To be a source for other servers' tools, publish your resource templates.
 
+The host follows every template-list page. If a listing fails, it retries on the next lookup instead of treating the server as having no templates until reconnect.
+
 - **One workspace.** Only the servers installed in the same workspace as your connection are consulted. A server in another workspace is never read, whatever it serves.
 - **One owner.** When two servers in the workspace claim the URI, the host reads neither and answers `ambiguous`. It does not guess.
 - **The host's own schemes are not resolved yet.** This extension does not yet resolve `files://`, `ui://`, `skill://`, `artifact://` or `conversation://` URIs, and no server can answer for them by advertising a matching template. For now, workspace files are read with [host resources](/extensions/host-resources/).

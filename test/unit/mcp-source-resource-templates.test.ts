@@ -63,6 +63,54 @@ describe("McpSource.resourceTemplates", () => {
     }
   });
 
+  it("retries an initial listing failure instead of caching an empty result", async () => {
+    const source = await startSource();
+    try {
+      let attempts = 0;
+      spyOn(source.getClient(), "listResourceTemplates").mockImplementation(async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("temporary outage");
+        return { resourceTemplates: [{ uriTemplate: "crm://contacts/{id}", name: "contact" }] };
+      });
+
+      expect(await source.resourceTemplates()).toEqual([]);
+      expect(await source.resourceTemplates()).toEqual([
+        { uriTemplate: "crm://contacts/{id}", name: "contact" },
+      ]);
+      expect(attempts).toBe(2);
+    } finally {
+      await source.stop();
+    }
+  });
+
+  it("collects every page before memoizing the listing", async () => {
+    const source = await startSource();
+    try {
+      const listing = spyOn(source.getClient(), "listResourceTemplates").mockImplementation(
+        async (params) => {
+          if (params?.cursor === "page-2") {
+            return { resourceTemplates: [{ uriTemplate: "crm://deals/{id}", name: "deal" }] };
+          }
+          expect(params).toBeUndefined();
+          return {
+            resourceTemplates: [{ uriTemplate: "crm://contacts/{id}", name: "contact" }],
+            nextCursor: "page-2",
+          };
+        },
+      );
+
+      const templates = await source.resourceTemplates();
+      expect(templates).toEqual([
+        { uriTemplate: "crm://contacts/{id}", name: "contact" },
+        { uriTemplate: "crm://deals/{id}", name: "deal" },
+      ]);
+      expect(await source.resourceTemplates()).toBe(templates);
+      expect(listing).toHaveBeenCalledTimes(2);
+    } finally {
+      await source.stop();
+    }
+  });
+
   it("asks the server again when told to, and remembers the new answer", async () => {
     const source = await startSource([{ uriTemplate: "crm://contacts/{id}", name: "contact" }]);
     try {
@@ -90,6 +138,41 @@ describe("McpSource.resourceTemplates", () => {
       );
       expect(await source.resourceTemplates({ fresh: true })).toEqual(first);
       expect(await source.resourceTemplates()).toEqual(first);
+    } finally {
+      await source.stop();
+    }
+  });
+
+  it("keeps the prior memo when a later page fails", async () => {
+    const source = await startSource([{ uriTemplate: "crm://contacts/{id}", name: "contact" }]);
+    try {
+      const first = await source.resourceTemplates();
+      spyOn(source.getClient(), "listResourceTemplates").mockImplementation(async (params) => {
+        if (params?.cursor === "page-2") throw new Error("second page unavailable");
+        return {
+          resourceTemplates: [{ uriTemplate: "crm://deals/{id}", name: "deal" }],
+          nextCursor: "page-2",
+        };
+      });
+
+      expect(await source.resourceTemplates({ fresh: true })).toBe(first);
+      expect(await source.resourceTemplates()).toBe(first);
+    } finally {
+      await source.stop();
+    }
+  });
+
+  it("does not cache a listing whose cursor repeats", async () => {
+    const source = await startSource();
+    try {
+      const listing = spyOn(source.getClient(), "listResourceTemplates").mockResolvedValue({
+        resourceTemplates: [],
+        nextCursor: "same-page",
+      });
+      expect(await source.resourceTemplates()).toEqual([]);
+      expect(listing).toHaveBeenCalledTimes(2);
+      expect(await source.resourceTemplates()).toEqual([]);
+      expect(listing).toHaveBeenCalledTimes(4);
     } finally {
       await source.stop();
     }
