@@ -32,9 +32,17 @@ function formatOffset(tz: string): string {
 interface TimezoneSelectProps {
   value: string;
   onChange: (value: string) => void;
+  /** What the trigger shows with no value, e.g. the default that applies. */
+  placeholder?: string;
+  id?: string;
 }
 
-export function TimezoneSelect({ value, onChange }: TimezoneSelectProps) {
+export function TimezoneSelect({
+  value,
+  onChange,
+  placeholder = "Select timezone...",
+  id,
+}: TimezoneSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -70,12 +78,13 @@ export function TimezoneSelect({ value, onChange }: TimezoneSelectProps) {
     }
   }, [open, value]);
 
-  const displayValue = value || "Select timezone...";
+  const displayValue = value || placeholder;
 
   return (
     <div ref={containerRef} className="relative">
       {/* Trigger */}
       <button
+        id={id}
         type="button"
         onClick={() => {
           setOpen(!open);

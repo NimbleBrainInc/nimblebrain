@@ -6183,6 +6183,11 @@ export class Runtime {
     };
   }
 
+  /** The operator's default timezone for people's profiles: `NB_TIMEZONE`, else UTC. */
+  getOperatorTimezone(): string {
+    return this._operatorTimezone;
+  }
+
   /** Invalidate cached identity for a user. Call after modifying user data (preferences, role). */
   invalidateUserCache(userId: string): void {
     this._identityProvider.invalidateUser?.(userId);

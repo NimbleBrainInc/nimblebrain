@@ -237,19 +237,18 @@ describe("saving a choice", () => {
 });
 
 describe("an empty model id is not a choice", () => {
-  // `get_config` reports an unset preference as `""`, so a client that reads
-  // preferences and writes them back sends `""`. Storing it would pin every
-  // conversation that user starts to a model that cannot answer, which they
-  // could not correct from chat because correcting it needs a turn.
-  it("clears rather than storing, round-tripping the unset sentinel", async () => {
-    const runtime = await start("empty-clears");
+  // `null` is the one spelling of a clear. An empty id is refused, naming it,
+  // rather than read as a second spelling or stored as a model nobody can run.
+  it("is refused, names null, and leaves the stored choice", async () => {
+    const runtime = await start("empty-refused");
     try {
       const userId = await seedUser(runtime);
       await setPreference(runtime, userId, CHOSEN);
       const res = await setPreference(runtime, userId, "");
-      expect(res.isError).toBeFalsy();
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain("null");
       const user = await runtime.getUserStore().get(userId);
-      expect(user?.preferences.models?.default).toBeUndefined();
+      expect(user?.preferences.models?.default).toBe(CHOSEN);
     } finally {
       await runtime.shutdown();
     }

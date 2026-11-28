@@ -22,9 +22,11 @@ Reach your profile any time from the **avatar menu** at the top-left of the side
 - **Display name** — how your name appears to teammates.
 - **Email** — your login email (read-only).
 - **Role** — your org-level role (read-only).
-- **Timezone** — used for scheduling and time-related responses.
+- **Timezone** — used for scheduling and time-related responses. Unset, it is the deployment's default ([`NB_TIMEZONE`](/config/environment/), else UTC), shown as **Default (…)**.
 - **Your model** — the model your new conversations start on, or follow the organization's default.
-- **Theme** — System (follows your OS), Light, or Dark.
+- **Theme** — System (follows your OS), Light, or Dark. Unset, it is the deployment's default theme, marked **Default**.
+
+A preference you have set shows an **×** (**Use default**) beside it: it clears your choice, so the deployment's default applies again and follows any later change to it.
 
 Each field saves as you change it: your name when you leave the field or press Enter (Escape undoes the edit), everything else when you pick. A save shows a notice with **Undo**; one the server refuses stays on the field with the reason, **Retry** and **Revert**.
 

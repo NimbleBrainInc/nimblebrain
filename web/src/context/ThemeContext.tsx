@@ -21,6 +21,11 @@ interface ThemeContextValue {
   setMode: (mode: ThemeMode) => void;
   /** Apply a server-side theme preference (light/dark/system). */
   applyPreference: (pref: ThemePreference) => void;
+  /**
+   * Drop the person's own theme, as when they clear their preference: the
+   * brand's `defaultTheme`, else the OS, applies again.
+   */
+  clearPreference: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -151,6 +156,14 @@ export function ThemeProvider({
     setModeState(resolved);
   }, []);
 
+  const clearPreference = useCallback(() => {
+    localStorage.removeItem(LS_KEY);
+    const resolved = resolvePreference(currentPreference());
+    modeRef.current = resolved;
+    applyMode(resolved);
+    setModeState(resolved);
+  }, []);
+
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -179,8 +192,8 @@ export function ThemeProvider({
   }, [toggle]);
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ mode, toggle, setMode, applyPreference }),
-    [mode, toggle, setMode, applyPreference],
+    () => ({ mode, toggle, setMode, applyPreference, clearPreference }),
+    [mode, toggle, setMode, applyPreference, clearPreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

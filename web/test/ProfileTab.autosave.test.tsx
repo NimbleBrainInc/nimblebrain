@@ -19,6 +19,7 @@ type CallToolArgs = { server: string; tool: string; args: Record<string, unknown
 const callToolCalls: CallToolArgs[] = [];
 
 let storedModel = "";
+let storedTimezone = "";
 /** The theme the server has stored for this person; `null` means none set. */
 let storedTheme: string | null = "system";
 let configFails = false;
@@ -32,9 +33,13 @@ mock.module("../src/api/client", () => ({
       if (configFails) throw new Error("network down");
       return {
         structuredContent: {
-          // No operator-set `models` key: nothing is pinned, and the label
-          // still has to name what "use the default" resolves to.
-          resolved: { models: { default: "anthropic:claude-sonnet-4-6" } },
+          // What each unset preference falls back to.
+          preferenceDefaults: {
+            timezone: "Pacific/Honolulu",
+            locale: "en-US",
+            theme: "system",
+            model: "anthropic:claude-sonnet-4-6",
+          },
           availableModels: {
             anthropic: [
               {
@@ -49,11 +54,12 @@ mock.module("../src/api/client", () => ({
               },
             ],
           },
+          // Only what the person set; an unset preference is absent.
           preferences: {
             displayName: "P",
-            timezone: "",
+            ...(storedTimezone ? { timezone: storedTimezone } : {}),
             ...(storedTheme ? { theme: storedTheme } : {}),
-            model: storedModel,
+            ...(storedModel ? { model: storedModel } : {}),
           },
         },
         isError: false,
@@ -92,6 +98,7 @@ afterEach(async () => {
   mounted = null;
   callToolCalls.length = 0;
   storedModel = "";
+  storedTimezone = "";
   storedTheme = "system";
   configFails = false;
   saveRejects = false;
@@ -277,5 +284,75 @@ describe("a stored model the catalog no longer carries", () => {
     const el = select(mounted.container)!;
     expect(el.value).toBe("google:gemini-3-pro-preview");
     expect(el.selectedOptions[0]?.textContent).toContain("google:gemini-3-pro-preview");
+  });
+});
+
+/** The "Use default" clear inside the field whose label is `label`. */
+function clearFor(c: HTMLElement, controlId: string): HTMLButtonElement | null {
+  const control = c.querySelector(`#${controlId}`);
+  const row = control?.closest("div.flex.items-start");
+  return row?.querySelector<HTMLButtonElement>('button[aria-label="Use default"]') ?? null;
+}
+
+const themeButton = (c: HTMLElement, label: string) =>
+  Array.from(c.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")).find((b) =>
+    b.textContent?.includes(label),
+  )!;
+
+describe("a preference the person set can go back to the default", () => {
+  test("an unset timezone shows the deployment's default and offers no clear", async () => {
+    mounted = await mount();
+    const trigger = mounted.container.querySelector("#timezone")!;
+    expect(trigger.textContent).toContain("Default (Pacific/Honolulu)");
+    expect(clearFor(mounted.container, "timezone")).toBeNull();
+  });
+
+  test("a set timezone shows Use default, which clears it with null and shows the default", async () => {
+    storedTimezone = "Europe/Berlin";
+    mounted = await mount();
+    const trigger = mounted.container.querySelector("#timezone")!;
+    expect(trigger.textContent).toContain("Europe/Berlin");
+    const clear = clearFor(mounted.container, "timezone")!;
+    expect(clear).not.toBeNull();
+    await act(async () => clear.click());
+    await flush();
+    expect(sets()).toEqual([{ timezone: null }]);
+    expect(trigger.textContent).toContain("Default (Pacific/Honolulu)");
+    expect(clearFor(mounted.container, "timezone")).toBeNull();
+  });
+
+  test("a set model clears with null through Use default", async () => {
+    storedModel = "anthropic:claude-opus-4-6";
+    mounted = await mount();
+    await act(async () => clearFor(mounted!.container, "preferred-model")!.click());
+    await flush();
+    expect(sets()).toEqual([{ model: null }]);
+    expect(select(mounted.container)!.value).toBe("");
+    expect(clearFor(mounted.container, "preferred-model")).toBeNull();
+  });
+
+  test("a set theme clears with null, and the default theme shows as the default", async () => {
+    storedTheme = "dark";
+    localStorage.setItem("nb-theme", "dark");
+    mounted = await mount();
+    const row = themeButton(mounted.container, "Dark").closest("div.flex.items-start")!;
+    const clear = row.querySelector<HTMLButtonElement>('button[aria-label="Use default"]')!;
+    await act(async () => clear.click());
+    await flush();
+    expect(sets()).toEqual([{ theme: null }]);
+    expect(themeButton(mounted.container, "System").textContent).toContain("Default (System)");
+    expect(row.querySelector('button[aria-label="Use default"]')).toBeNull();
+    // This browser's copy of the cleared choice is dropped, so the default applies.
+    expect(localStorage.getItem("nb-theme")).toBeNull();
+  });
+
+  test("an unset theme shows the default option and offers no clear", async () => {
+    storedTheme = null;
+    mounted = await mount();
+    const system = themeButton(mounted.container, "System");
+    expect(system.textContent).toContain("Default (System)");
+    expect(
+      system.closest("div.flex.items-start")!.querySelector('button[aria-label="Use default"]'),
+    ).toBeNull();
   });
 });

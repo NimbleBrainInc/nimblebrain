@@ -2,9 +2,7 @@
  * The people a booted runtime knows, each signed in by a bearer token.
  *
  * `alice` is an org admin, `bob` an org member. Each is provisioned in the
- * runtime's user store on first use, as a production provider's users are,
- * with a timezone set: a scenario that changes it can write a set one back,
- * and no public interface unsets one.
+ * runtime's user store on first use, as a production provider's users are.
  */
 
 import type {
@@ -85,7 +83,6 @@ export class TokenIdentityProvider implements IdentityProvider {
           email: person.email,
           displayName: person.displayName,
           orgRole: person.orgRole,
-          preferences: { timezone: "UTC" },
         });
       })();
       this.seeded.set(person.id, pending);

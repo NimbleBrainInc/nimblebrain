@@ -58,9 +58,8 @@ A deployment's workspaces are real and every scenario writes, so:
 - **A change to the person rather than a workspace** (a preference) is made inside the
   scenario's `try` and put back in its `finally`, and the restore is proven by reading the
   value back. A restore that fails or does not read back goes to `t.leftBehind(why)`, which
-  lists it in the report's `leftBehind` beside workspaces, failing the run. No public
-  interface unsets a timezone, so `tasks.authoring` can restore only a set one; the
-  in-process people are provisioned with `UTC`.
+  lists it in the report's `leftBehind` beside workspaces, failing the run. A preference
+  that was unset is restored by clearing it with `null`.
 - **A workspace is gone only when its purge succeeds, or successful listings (live and
   deleted) lack it.** Any other answer lists it in the report's `leftBehind`, which fails the run.
 - In-process runs use each person's first workspace of a throwaway work directory.

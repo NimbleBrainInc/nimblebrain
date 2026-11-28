@@ -19,7 +19,7 @@ import { unqualifiedModelIdError } from "../model/model-id.ts";
 import { isModelSlot, MODEL_SLOTS } from "../model/slots.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { TelemetryLockedError } from "../telemetry/manager.ts";
-import { type InProcessTool, READ_ONLY } from "./in-process-app.ts";
+import { type InProcessTool, READ_ONLY, typedTool } from "./in-process-app.ts";
 import { McpSource } from "./mcp-source.ts";
 import { createOpenAppTool } from "./open-app.ts";
 import { SharedSourceRef } from "./registry.ts";
@@ -34,8 +34,17 @@ import type {
   BriefingOutput,
   ConversationStartersOutput,
 } from "../platform/schemas/home.ts";
+import { SetPreferencesInput, SetPreferencesOutput } from "../platform/schemas/preferences.ts";
 import { createBriefingCollector } from "../services/briefing-collector.ts";
 import { workspaceConversationStarters } from "../services/workspace-conversation-starters.ts";
+import {
+  applyPreferencesPatch,
+  effectivePreferences,
+  hasPreferenceFields,
+  ownPreferences,
+  preferenceDefaults,
+  preferencesInputError,
+} from "./preferences.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
 
 // --- set_model_config helpers -------------------------------------------------
@@ -311,44 +320,15 @@ function buildModelConfigRuntimePatch(input: Record<string, unknown>): Record<st
 
 // --- set_preferences helpers --------------------------------------------------
 
-const PREFERENCE_FIELDS = ["displayName", "timezone", "locale", "theme"];
-
-/**
- * Coerce the allowed preference inputs into a patch, skipping unset fields.
- *
- * The scalar fields stringify; `model` does not travel with them. It is the
- * one preference that has to be a structured value on the user record
- * (`preferences.models.default`), and running it through the same `String()`
- * path would store `[object Object]`.
- */
-function buildPreferencesPatch(input: Record<string, unknown>): Record<string, unknown> {
-  const patch: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (PREFERENCE_FIELDS.includes(key) && value !== undefined) {
-      patch[key] = String(value);
-    }
-  }
-  if (input.model !== undefined) {
-    // Null and empty both clear. Empty matters because `get_config` reports an
-    // unset preference as `""`, so a client that reads preferences and writes
-    // them back sends exactly that — and storing it would pin the user to an
-    // empty model id they cannot correct without a working turn.
-    const chosen = typeof input.model === "string" ? input.model.trim() : "";
-    patch.models = chosen ? { default: chosen } : {};
-  }
-  return patch;
-}
-
 /**
  * Reject a model choice the deployment does not permit, so a person is told at
  * the point of choosing rather than finding their preference silently ignored
  * on the next turn. `getModelSlots` re-checks on read for the case this cannot
  * cover: an allowlist narrowed after the preference was saved.
  */
-function preferredModelError(input: Record<string, unknown>, runtime: Runtime): string | null {
+function preferredModelError(input: SetPreferencesInput, runtime: Runtime): string | null {
   if (typeof input.model !== "string") return null;
   const chosen = input.model.trim();
-  if (chosen === "") return null; // clearing, nothing to validate
   const unqualified = unqualifiedModelIdError(chosen);
   if (unqualified) return unqualified;
   if (runtime.isModelPermitted(chosen)) return null;
@@ -488,7 +468,6 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       handler: async (): Promise<ToolResult> => {
         try {
           const identity = runtime.getCurrentIdentity();
-          const preferences = identity?.preferences ?? {};
           return {
             content: textContent("Current runtime configuration."),
             structuredContent: {
@@ -521,21 +500,15 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
                 runtime.getProviderConfigs(),
                 runtime.getModelPolicy(),
               ),
+              // What the person set, each field absent when unset, beside what
+              // an unset one falls back to, so a client shows the person's own
+              // value or the default and never mistakes one for the other.
+              // Theme matters most: the shell applies any theme it is given.
               preferences: {
                 displayName: identity?.displayName ?? "",
-                timezone: preferences.timezone ?? "",
-                locale: preferences.locale ?? "en-US",
-                // Absent when unset, as in /v1/bootstrap. The shell applies any
-                // theme it is given, so reporting "system" for a user who never
-                // chose one overrode the theme their browser holds whenever a
-                // `config.changed` event made it re-read this. A brand's
-                // `defaultTheme` reaches the shell through `/v1/brand.js` instead,
-                // so it is never mistaken for the person's own choice.
-                ...(preferences.theme ? { theme: preferences.theme } : {}),
-                // Empty when unset, so a client can tell "following the
-                // configured default" from "chose this model deliberately".
-                model: preferences.models?.default ?? "",
+                ...ownPreferences(identity?.preferences),
               },
+              preferenceDefaults: preferenceDefaults(runtime),
             },
             isError: false,
           };
@@ -695,55 +668,35 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
         }
       },
     },
-    {
+    typedTool({
       name: "set_preferences",
       description:
-        "Set user preferences: display name, timezone, locale, theme, or the model this user's new conversations run on. Use this when the user says their name, asks to change timezone/language/theme, or asks to use a particular model.",
+        "Set user preferences: display name, timezone, locale, theme, or the model this user's new conversations run on. Use this when the user says their name, asks to change timezone/language/theme, or asks to use a particular model. A patch: omit a field to leave it, pass a value to set it, or pass null to clear it so the deployment's default applies again (when the user asks to go back to the default). The result reports each preference in force and whether it is the user's own or the default.",
       meta: { ...WORKSPACE_OPTIONAL_META },
-      inputSchema: {
-        type: "object",
-        properties: {
-          displayName: { type: "string", description: "User's display name (e.g., 'Matt')." },
-          timezone: { type: "string", description: "IANA timezone (e.g., 'Pacific/Honolulu')." },
-          locale: { type: "string", description: "BCP 47 locale (e.g., 'en-US')." },
-          theme: { type: "string", enum: ["system", "light", "dark"], description: "Color theme." },
-          model: {
-            type: ["string", "null"],
-            description:
-              "Model for this user's new conversations, as `provider:model-id`. Applies to conversations started after the change — an existing one keeps the model it was created with. Null clears the choice and follows the configured default. Auxiliary models (title generation, briefing, compaction) are operator-configured and not settable here.",
-          },
-        },
-      },
-      handler: async (input): Promise<ToolResult> => {
+      inputSchema: SetPreferencesInput,
+      outputSchema: SetPreferencesOutput,
+      handler: async (input) => {
         try {
           const identity = runtime.getCurrentIdentity();
           if (!identity) {
             return { content: textContent("No authenticated user."), isError: true };
           }
-
-          const modelError = preferredModelError(input, runtime);
-          if (modelError) return { content: textContent(modelError), isError: true };
-
-          const patch = buildPreferencesPatch(input);
-          if (Object.keys(patch).length === 0) {
-            return { content: textContent("No valid preference fields provided."), isError: true };
+          if (!hasPreferenceFields(input)) {
+            return { content: textContent("No preference fields provided."), isError: true };
           }
+          const inputError = preferencesInputError(input) ?? preferredModelError(input, runtime);
+          if (inputError) return { content: textContent(inputError), isError: true };
 
-          // Update the user's profile with new preferences
           const userStore = runtime.getUserStore();
           const user = await userStore.get(identity.id);
           if (!user) {
             return { content: textContent("User profile not found."), isError: true };
           }
 
-          const updatedPrefs = { ...user.preferences, ...patch };
-
-          // displayName is a top-level User field, not a preference
-          const userPatch: Record<string, unknown> = { preferences: updatedPrefs };
-          if (patch.displayName) {
-            userPatch.displayName = patch.displayName;
-          }
-          await userStore.update(identity.id, userPatch);
+          const preferences = applyPreferencesPatch(user.preferences, input);
+          // displayName is a top-level User field, not a preference.
+          const displayName = input.displayName?.trim() ?? user.displayName;
+          await userStore.update(identity.id, { preferences, displayName });
 
           // Invalidate cached identity so next request picks up new preferences
           runtime.invalidateUserCache(identity.id);
@@ -754,9 +707,21 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
             data: { fields: ["preferences"] },
           });
 
+          const effective = effectivePreferences(preferences, preferenceDefaults(runtime));
+          const changed = Object.keys(input).filter(
+            (k) => input[k as keyof SetPreferencesInput] !== undefined,
+          );
+          const inForce = Object.entries(effective)
+            .map(([k, e]) => `${k}: ${e.value}${e.source === "default" ? " (default)" : ""}`)
+            .join("; ");
           return {
-            content: textContent(`Preferences updated: ${Object.keys(patch).join(", ")}.`),
-            structuredContent: { success: true, preferences: updatedPrefs },
+            content: textContent(`Preferences updated: ${changed.join(", ")}. Now ${inForce}.`),
+            structuredContent: {
+              success: true as const,
+              displayName,
+              preferences: ownPreferences(preferences),
+              effective,
+            },
             isError: false,
           };
         } catch (err) {
@@ -768,7 +733,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
           };
         }
       },
-    },
+    }),
     {
       name: "workspace_info",
       description:
