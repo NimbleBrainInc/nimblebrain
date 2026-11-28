@@ -43,6 +43,10 @@ servers:
             resourceUri: ui://settings
 ```
 
+### In a plugin archive
+
+A catalog that lists your server as a plugin carries this same record inside the plugin's archive, in its `ai.nimblebrain/servers` directory as `<key>.json`, one file per server key the plugin's `plugin.json` names. Installing the plugin reads the record from there, after the archive's digest is verified, so the host metadata below comes from the archive the install fetched. A connector listed on its own carries the record inline in the catalog's listing instead.
+
 ## Host metadata: `_meta["ai.nimblebrain/host"]`
 
 | Field | Type | Required | Description |

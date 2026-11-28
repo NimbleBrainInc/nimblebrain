@@ -45,6 +45,29 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
 - **The extension declares capabilities, never trust.** Nothing in it makes a plugin a
   system plugin, sets where a server runs, or switches a kernel feature.
 
+## Installed from a catalog
+
+- **`installed/` is install's half of a plugin (ADR-0077)**: `artifact.ts` fetches an item's
+  artifact through the bounded fetch, verifies it against the entry's `digest` (inline `data`
+  over its RFC 8785 form, `src/util/jcs.ts`), caches it by digest under `cache/plugins/`, and
+  reads it: the manifest through `parsePluginManifest`, each server's `ServerDetail` from
+  `ai.nimblebrain/servers/<key>.json`, a `stdio` server refused. A bare connector or skill reads
+  as a one-item plugin. `record.ts` is the installed-plugin record and its store.
+- **A record lives beside its owner's connectors**: `workspace.json#plugins`, or
+  `users/<id>/connectors.json#plugins`, in install order. Write it through
+  `Runtime.getPluginRecords()`, which drops the runtime's read of every owner's records, so the
+  connector list (`Runtime.installedServerRecords`, read ahead of `ConnectorCatalog`'s own) sees
+  the change. The first record naming a server supplies its `ServerDetail`.
+- **The record is written last; every step before it is idempotent.** A connected server is
+  reused and a skill file rewritten in place, so a stopped install finishes on the next one.
+  Uninstall removes what the record lists (a connection another record names stays), then the
+  record. Never adopt a connection no record names at another URL: it is the owner's.
+- **A plugin's skills are managed** (`src/skills/managed-skills.ts`): a bound one in the owner's
+  `connector-skills/<serverName>/`, any other in `plugin-skills/<address>/`, each marked by
+  provenance `plugin:<address>:<skill>`. The skill tools refuse to write any file in either
+  store and offer `skills__copy`. Never run the connector-skill resolver for a plugin install
+  (`bindSkills: false`).
+
 ## Defaults ship in the box
 
 - **The default plugins are configuration, in `src/config/plugins.ts` (`DEFAULT_PLUGINS`)**: the

@@ -7,9 +7,9 @@ import { Aside, Code, Tabs, TabItem } from '@astrojs/starlight/components';
 
 The **Plugins → Browse plugins** list is built from **catalogs**: [AI Catalog](https://ai-catalog.io/spec/) listings the operator names in [`catalogs`](#catalogs-what-browse-lists). Each listed item is a row, addressed `name@catalog` (`ahrefs@nimblebrain`). Browse reads the listings only; it never opens a plugin archive.
 
-Installing a row still reads the server's record from the **connector list**, one list of [`ServerDetail`](https://github.com/modelcontextprotocol/registry) files (the shape the upstream MCP registry publishes), as described [below](#where-the-connector-list-lives). Only an entry advertising a `remotes[]` endpoint is installable: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable `packages[]`.
+Installing a row installs a **plugin**: the item at the row's address, from that item's own artifact. The runtime fetches the entry's `url` once and installs only bytes that match its `digest` (an entry carrying its artifact inline as `data` is verified over the data's [canonical JSON form](https://www.rfc-editor.org/rfc/rfc8785)). An artifact that does not match is refused and nothing is installed. Each server's record, a [`ServerDetail`](https://github.com/modelcontextprotocol/registry), comes from the archive (`ai.nimblebrain/servers/<key>.json`) and decides the connector: URL, auth, transport, scopes, and authorization parameters; the listing's own fields grant nothing. A plugin that runs a `stdio` server is refused: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable code. A connector or a skill listed on its own installs the same way, as a one-item plugin.
 
-An install names a row by its `id`, its server's registry name. The runtime resolves that id, matched exactly, to the connector list's own entry and builds the connector from that entry alone: URL, auth, transport, scopes, and authorization parameters. Whatever else the request carries is discarded. An id the connector list does not hold is refused with `NOT_IN_CATALOG`, for a [personal install](/using/personal-connectors/) as for a workspace install. Adding a server by its URL is a separate capability, available only on a local install (`npx nimblebrain`).
+The install is recorded on its owner (the workspace, or the person for a [personal install](/using/personal-connectors/)): the address, the digest it was installed at, and exactly the connectors, skills and conversation starters it produced. Uninstalling removes exactly those. A connector two installed plugins use stays until the last of them is removed. A digest that moves in the listing is an update an admin applies (`update_plugin`); nothing updates on its own. Adding a server by its URL is a separate capability, available only on a local install (`npx nimblebrain`), and never becomes a plugin.
 
 ## Catalogs: what Browse lists
 
@@ -34,7 +34,7 @@ An install names a row by its `id`, its server's registry name. The runtime reso
 | `name` | The catalog part of an item's address. Default: from the source, the domain label before the last (`nimblebrain` for `catalog.nimblebrain.ai`) or a path's last segment (`local`). Two catalogs that derive one name are refused until one sets `name`. `curated` is reserved. |
 | `refreshMinutes` | How often an unpinned listing is read again. Default 15. |
 
-With no `catalogs` key, the instance reads NimbleBrain's catalog at `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json` ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai/.well-known/ai-catalog.json) by default). An empty list reads no listings; the connector list's records still show under `curated` (see [What a row shows](#what-a-row-shows)) until install reads an item's own archive. Only the seed config sets it; the override file cannot.
+With no `catalogs` key, the instance reads NimbleBrain's catalog at `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json` ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai/.well-known/ai-catalog.json) by default). An empty list reads no listings, so Browse lists only a mounted directory's own records (see [What a row shows](#what-a-row-shows)). Only the seed config sets it; the override file cannot.
 
 Each listing is:
 
@@ -55,11 +55,13 @@ A row is one listing entry: its `displayName`, `description` and `tags`, and fro
 
 The same server listed by two catalogs is a row under each, with no precedence between them. To prefer one catalog's item, leave it out of the other.
 
-Until install reads an item's own archive, a row is listed only when its entry names exactly one server and the connector list holds that server's record; other entries are logged once per read. The connector list's records that no listing names (a mounted directory's fleet services and tenant entries) are listed under the reserved catalog `curated`, so nothing you mounted leaves Browse.
+A row shows the setup its install will ask for. Setup a listing does not carry yet (a static entry's OAuth app portal, a broker's fields) is read from the connector list's record of that server, below; an entry whose auth needs none (`dcr`, `none`) is a row from its listing alone, and a connector listed on its own is a row from its inline record. An entry Browse cannot show (no server or several, or setup nothing describes) is logged once per read; it still installs by its address.
+
+When `NB_CURATED_CATALOG_DIR` mounts a directory, its records that no listing names (fleet services, tenant entries) are rows of the reserved catalog `curated`, and install from that directory as connectors, with no plugin record.
 
 ## Where the connector list lives
 
-Install reads server records from the connector list, which has one source at a time.
+The connector list supplies the setup a Browse row shows, a mounted directory's `curated` rows, and the records of connectors installed before plugins were. It has one source at a time.
 
 **By default, the NimbleBrain plugin catalog.** The runtime reads the connector list of the catalog at [`NB_PLUGIN_CATALOG_URL`](/config/environment/#connectors-catalog) ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai)), the same catalog its [connector skills](/using/skills/#connector-skill-overlays) come from. A source checkout, `npx nimblebrain`, and a release image all show the same list.
 

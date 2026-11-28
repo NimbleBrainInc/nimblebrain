@@ -246,7 +246,7 @@ written to disk. `vendored` is not: it is the trust marker for platform-shipped
 skills, stamped in memory at load on the platform's own source-tree directories
 and absent from the on-disk schema, so a file cannot forge it (ADR-0012).
 
-### Plugin *(decided, ADR-0068 and ADR-0077; not yet built)*
+### Plugin *(ADR-0068 and ADR-0077; install, uninstall and update from a catalog are built)*
 The unit of install, and the only thing the runtime installs from a catalog: an
 Agent Plugins directory that bundles servers and skills. `name@catalog`
 addresses one (`linear@nimblebrain`). A single skill or connector a catalog
@@ -255,10 +255,10 @@ install path; the person sees a skill or a connector. A plugin's servers are
 remote; one that names a `stdio` server is not installable. A workspace or a
 person owns a plugin (ADR-0069). Not plugins: a person's own authored skills and
 connectors added by URL, which are theirs, and system plugins, which share the
-format and reader but are bound by the operator. Today connectors and skills
-install separately, as *Source* and *Skill* describe.
+format and reader but are bound by the operator. A mounted connector directory's
+own records still install as plain connectors until it becomes a path catalog.
 
-### Catalog *(ADR-0077; the listing and Browse are built, install from it is not yet)*
+### Catalog *(ADR-0077; the listing, Browse and install from it are built; `required` reconcile is not)*
 `{source, policy, sha256?}` in the operator's configuration: `source` an AI
 Catalog listing URL or a mounted path, `policy` `required` or `available`
 (*Catalog policy*), `sha256` a pin of the listing, which a `required` catalog
@@ -271,18 +271,22 @@ produces comes only from the artifact verified against that digest. That is why
 a `required` catalog must be pinned. Catalogs sit side by side, with no
 precedence between them.
 
-### Installed plugin record *(decided, ADR-0077; not yet built)*
-One per install per owner: `name@catalog`, the digest of the artifact fetched,
-and exactly what it produced (connectors, skills, conversation starters).
+### Installed plugin record *(ADR-0077)*
+One per install per owner, beside the owner's connectors: `name@catalog`, the
+digest of the artifact fetched, and exactly what it produced (connectors, each
+with its server record; skills; conversation starters). It is written last, and
+every install step before it converges when run again.
 Uninstall removes what it lists; a connection that two installed plugins name
 stays until the last is removed, its `ServerDetail` re-read from the next
 remaining plugin in install order. Update replaces the digest and what the
-plugin owns. Readers of installed state read records; nothing scans artifacts.
+plugin owns. Readers of installed state read records; nothing scans artifacts
+(starters and the plugin list move onto records in a later step).
 The pin of what is installed is the record's digest, never one compiled into
 the image or set for the whole deployment.
 
-### Managed skill *(decided, ADR-0077; not yet built)*
-A skill an installed plugin produced, marked with its plugin and read-only.
+### Managed skill *(ADR-0077)*
+A skill an installed plugin produced, marked with its plugin and read-only; one
+that names none of the plugin's servers loads as `plugin:<name>@<catalog>:<skill>`.
 Update replaces it and uninstall removes it. A person who wants to change one
 makes their own copy, which no plugin touches.
 
