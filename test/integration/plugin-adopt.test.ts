@@ -12,7 +12,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolvePluginCatalogConfig } from "../../src/config/plugin-catalog.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -60,7 +59,6 @@ let base: string;
 let objects: Map<string, Uint8Array>;
 let requests: string[];
 let runtime: Runtime | null;
-let savedDir: string | undefined;
 
 beforeEach(() => {
   workDir = join(tmpdir(), `nb-plugin-adopt-${crypto.randomUUID()}`);
@@ -78,16 +76,12 @@ beforeEach(() => {
     },
   });
   base = `http://127.0.0.1:${server.port}`;
-  savedDir = process.env[CATALOG_DIR_ENV];
-  delete process.env[CATALOG_DIR_ENV];
   runtime = null;
 });
 
 afterEach(async () => {
   await runtime?.shutdown();
   await server.stop(true);
-  if (savedDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedDir;
   rmSync(workDir, { recursive: true, force: true });
 });
 

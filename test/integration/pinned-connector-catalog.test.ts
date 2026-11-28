@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { resetPinnedConnectorAttempts } from "../../src/connectors/catalog/pinned.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
@@ -31,7 +30,7 @@ const LIST = new TextEncoder().encode(`servers:
 `);
 const PIN = sha256(LIST);
 
-const ENV = ["NB_PLUGIN_CATALOG_URL", "NB_PLUGIN_CATALOG_CONNECTORS_SHA256", CATALOG_DIR_ENV];
+const ENV = ["NB_PLUGIN_CATALOG_URL", "NB_PLUGIN_CATALOG_CONNECTORS_SHA256"];
 let saved: Record<string, string | undefined>;
 let workDir: string;
 let server: ReturnType<typeof Bun.serve> | null;
@@ -64,7 +63,6 @@ async function connectorList(dir: string): Promise<string[]> {
 
 beforeEach(() => {
   saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
-  delete process.env[CATALOG_DIR_ENV];
   process.env.NB_PLUGIN_CATALOG_CONNECTORS_SHA256 = PIN;
   workDir = mkdtempSync(join(tmpdir(), "nb-pinned-catalog-"));
   server = null;

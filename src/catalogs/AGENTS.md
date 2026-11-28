@@ -17,17 +17,26 @@ Scope: `src/catalogs/`. The AI Catalog listings the operator names in `catalogs`
 - **Install reads the item's artifact, never a row.** A row is addressed `name@catalog`, and
   install (`src/tools/plugin-install.ts`) looks the address up in the cached listing, verifies
   the artifact against `digest`, and connects each server from the archive's own record. A
-  listing entry keeps its inline `data` (`ListedEntry.data`) for that; nothing else reads it.
-- **A row's setup may come from the connector list, nothing else.** A row shows setup the
-  extension does not carry (an OAuth client portal and secret key, a broker's fields, secret
-  headers), so a one-server row takes its `install` from the connector list's record of that
-  server when the list holds one (`listings({ installed: false })`), else from the extension
-  alone for `dcr`/`none`; a bare connector's row is projected from its inline record. An entry
-  this shape cannot show is logged and left out; it still installs by address.
-- **`curated` rows are a mounted directory's only.** With `NB_CURATED_CATALOG_DIR` set
-  (`ConnectorCatalog.isMounted()`), its records no listing names are rows of the reserved
-  catalog `curated` and install from the directory as plain connectors, with no record, until
-  step 4 makes the directory a path catalog. The pinned connector list never yields a row.
+  listing entry keeps its inline `data` (`ListedEntry.data`) for that, and for
+  `listed-records.ts` below.
+- **Every plugin entry of one server is a row; setup it lacks is read from its one artifact,
+  later.** A row's status is the listing's (`servers[].auth`). A bare connector's row is
+  projected from its inline record, which carries every fact the web asks for before install
+  (an OAuth client portal and secret key, a broker's fields, secret headers). A plugin entry's
+  row has only its server's auth; for any auth but `dcr`/`none` it is marked
+  `setupFromArtifact`, and `manage_connectors get_setup` (and `set_oauth_client` by
+  `address`) reads the record from that one plugin's verified artifact when a person opens
+  set-up or installs, cached by digest. Never during Browse. The extension is not widened to
+  carry setup: the artifact's record already does. An entry with several servers or a type
+  Browse cannot show is logged and left out, and still installs by address.
+- **A listing's bare connectors are the connector list's records** for a connector no plugin
+  record supplies (`listed-records.ts`, read by `ConnectorCatalog` after the owner's records
+  and before the pinned list): verified against `digest`, schema-checked, and one the safety
+  scrub refuses kept only for its `adminTools` restriction. An edit to an unpinned listing
+  reaches them at its next read.
+- **A path catalog replaces a mounted connector directory.** There is no `curated` catalog,
+  no reserved name, and no install from a directory. An operator converts a directory of
+  `{servers: [...]}` files with `bun run catalog:convert` and mounts the listing it writes.
 - **Catalogs sit side by side.** The same server from two catalogs is a row under each; there
   is no precedence, dedupe or merge between catalogs.
 - **`entry-extension.ts` (TypeBox) is the source of

@@ -11,10 +11,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
+import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type { ToolResult } from "../../src/engine/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
+import type { PluginsListOutput } from "../../src/platform/schemas/plugins.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
@@ -57,7 +58,6 @@ let base: string;
 let objects: Map<string, Uint8Array>;
 let requests: string[];
 let runtime: Runtime | null;
-let savedDir: string | undefined;
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-plugin-install-"));
@@ -74,16 +74,12 @@ beforeEach(() => {
     },
   });
   base = `http://127.0.0.1:${server.port}`;
-  savedDir = process.env[CATALOG_DIR_ENV];
-  delete process.env[CATALOG_DIR_ENV];
   runtime = null;
 });
 
 afterEach(async () => {
   await runtime?.shutdown();
   await server.stop(true);
-  if (savedDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedDir;
   rmSync(workDir, { recursive: true, force: true });
 });
 
@@ -821,5 +817,123 @@ describe("plugin install", () => {
     const updated = await call({ action: "update_plugin", address: "wiki@test" });
     expect(updated.structuredContent).toMatchObject({ updated: true, reconnectedConnectors: [] });
     expect((await workspace(rt, wsId)).connectors.map((c) => c.url)).toEqual([NOTION.url]);
+  }, 30_000);
+
+  test("an item its available catalog drops stays installed and shows as no longer offered", async () => {
+    writeListing([bareConnectorEntry("linear", LINEAR), bareConnectorEntry("notion", NOTION)]);
+    const { rt, wsId, call } = await boot();
+    await call({ action: "install", address: "linear@test" });
+    const plugins = async () =>
+      ((await call({ action: "list_plugins" })).structuredContent as PluginsListOutput).plugins;
+    expect((await plugins())[0]?.noLongerOffered).toBeUndefined();
+
+    writeListing([bareConnectorEntry("notion", NOTION)]);
+    await rt.getCatalogListings().refresh();
+    const [linear] = await plugins();
+    expect(linear?.servers.map((s) => s.serverName)).toEqual([LINEAR_SERVER]);
+    expect(linear?.noLongerOffered).toBe(true);
+    expect(linear?.required).toBeUndefined();
+    expect((await workspace(rt, wsId)).plugins?.map((p) => p.address)).toEqual(["linear@test"]);
+    const update = await call({ action: "update_plugin", address: "linear@test" });
+    expect(update.structuredContent).toMatchObject({ error: "NOT_OFFERED" });
+
+    // Its catalog leaving the configuration says the same; uninstall still works.
+    const other = join(workDir, "other.json");
+    writeFileSync(other, listingBytes([]));
+    await rt.shutdown();
+    const restarted = await Runtime.start({
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
+      logging: { disabled: true },
+      workDir,
+      catalogs: [{ source: other, policy: "available", name: "other" }],
+    });
+    runtime = restarted;
+    await restarted.ensureWorkspaceRegistry(wsId);
+    const again = createManageConnectorsTool({
+      runtime: restarted,
+      getIdentity: () => ADMIN,
+      getWorkspaceId: () => wsId,
+    });
+    const listed = (await again.handler({ action: "list_plugins" }))
+      .structuredContent as PluginsListOutput;
+    expect(listed.plugins[0]?.noLongerOffered).toBe(true);
+    const removed = await again.handler({ action: "uninstall", address: "linear@test" });
+    expect(removed.isError).toBe(false);
+  }, 30_000);
+
+  test("an item whose entry its available catalog rejects as invalid is not shown as no longer offered", async () => {
+    writeListing([bareConnectorEntry("linear", LINEAR), bareConnectorEntry("notion", NOTION)]);
+    const { rt, call } = await boot();
+    await call({ action: "install", address: "linear@test" });
+    writeListing([
+      { ...bareConnectorEntry("linear", LINEAR), digest: "sha256:not-hex" },
+      bareConnectorEntry("notion", NOTION),
+    ]);
+    await rt.getCatalogListings().refresh();
+    const [linear] = (
+      (await call({ action: "list_plugins" })).structuredContent as PluginsListOutput
+    ).plugins;
+    expect(linear?.servers.map((s) => s.serverName)).toEqual([LINEAR_SERVER]);
+    expect(linear?.noLongerOffered).toBeUndefined();
+  }, 30_000);
+
+  test("a static plugin row reads its setup from that one artifact only at set-up", async () => {
+    const LEDGER: FixtureServer = {
+      name: "com.acme/ledger",
+      url: "https://mcp.ledger.test/mcp",
+      meta: {
+        auth: "static",
+        oauthClientSetup: {
+          portalUrl: "https://developer.ledger.test/",
+          hint: "Create an OAuth app",
+          clientSecretKey: "ledger.client_secret",
+        },
+      },
+    };
+    const ledger = pluginZip({ name: "ledger", servers: { ledger: LEDGER } });
+    writeListing([
+      publish("ledger", ledger, { servers: { ledger: { name: LEDGER.name, auth: "static" } } }),
+      publish("notion", notionPlugin(), {
+        servers: { notion: { name: NOTION.name, auth: "dcr" } },
+      }),
+    ]);
+    const { rt, wsId, call } = await boot();
+    type Row = CatalogListing & { address?: string };
+    const rows = async () =>
+      ((await call({ action: "list_directory" })).structuredContent as { entries: Row[] }).entries;
+
+    const row = (await rows()).find((e) => e.address === "ledger@test");
+    expect(row).toMatchObject({ status: "setup", setupFromArtifact: true });
+    expect(artifactFetches()).toEqual([]);
+
+    const setup = await call({ action: "get_setup", address: "ledger@test" });
+    const entry = (setup.structuredContent as { entry: Row }).entry;
+    expect(entry.install).toMatchObject({
+      url: LEDGER.url,
+      auth: "static",
+      oauthClientSetup: LEDGER.meta?.oauthClientSetup,
+    });
+    expect(entry.setupFromArtifact).toBeUndefined();
+    expect(artifactFetches()).toHaveLength(1);
+    await call({ action: "get_setup", address: "ledger@test" });
+    expect(artifactFetches()).toHaveLength(1);
+
+    const saved = await call({
+      action: "set_oauth_client",
+      catalogId: LEDGER.name,
+      address: "ledger@test",
+      clientId: "cid",
+      clientSecret: "secret",
+    });
+    expect(saved.isError).toBe(false);
+    expect((await rows()).find((e) => e.address === "ledger@test")?.status).toBe("ready");
+
+    const installed = await call({ action: "install", address: "ledger@test" });
+    expect(installed.isError).toBe(false);
+    const ref = (await workspace(rt, wsId)).connectors.find(
+      (c) => c.serverName === "com-acme-ledger",
+    );
+    expect(ref?.oauthClient).toMatchObject({ clientId: "cid" });
   }, 30_000);
 });

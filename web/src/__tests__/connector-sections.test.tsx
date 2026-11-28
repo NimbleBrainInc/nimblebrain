@@ -327,6 +327,13 @@ describe("ConnectorHeader — badge and menu", () => {
     expect(kinds).toEqual(["disconnect", "uninstall", "details"]);
   });
 
+  test("offers an admin no Remove for a required plugin's connector", () => {
+    const kinds = connectorMenuItems(dcrConnector({ state: "running" }), true, {
+      removable: false,
+    }).map((i) => i.kind);
+    expect(kinds).toEqual(["disconnect", "details"]);
+  });
+
   test("offers a member only the documentation and the details", () => {
     const withDocs = dcrConnector({ state: "running" });
     withDocs.catalog = { ...withDocs.catalog!, docsUrl: "https://docs.granola.test" };

@@ -828,7 +828,7 @@ The [AI Catalog](https://ai-catalog.io/spec/) listings this instance offers to i
 }
 ```
 
-A `required` catalog without `sha256` is refused at load, so what every workspace receives moves only when you move its pin. The fields, the refresh and cache rules, and how each row's status is derived are in [Connectors Catalog → Catalogs](/config/connectors-catalog/#catalogs-what-browse-lists). The override file cannot set `catalogs`.
+A `required` catalog's items are installed into every workspace, one created later included, and cannot be uninstalled there; one it stops listing is uninstalled everywhere ([Required catalogs](/config/connectors-catalog/#required-catalogs)). A `required` catalog without `sha256` is refused at load, so what every workspace receives moves only when you move its pin. A `source` that is a path is a [path catalog](/config/connectors-catalog/#path-catalogs) you mount. The fields, the refresh and cache rules, and how each row's status is derived are in [Connectors Catalog → Catalogs](/config/connectors-catalog/#catalogs-what-browse-lists). The override file cannot set `catalogs`.
 
 ## files
 

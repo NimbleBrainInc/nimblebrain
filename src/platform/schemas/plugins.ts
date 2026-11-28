@@ -86,6 +86,17 @@ export const Plugin = Type.Object({
   servers: Type.Array(PluginServer),
   skills: Type.Array(PluginSkill),
   apps: Type.Array(PluginApp),
+  /**
+   * True when a `required` catalog puts it in every workspace (ADR-0076): no
+   * person can uninstall it, and it goes only when its catalog drops it.
+   */
+  required: Type.Optional(Type.Boolean()),
+  /**
+   * True when the catalog it was installed from no longer lists it, or is no
+   * longer configured. It stays installed until someone removes it; it cannot
+   * be updated. Absent while its catalog cannot be read.
+   */
+  noLongerOffered: Type.Optional(Type.Boolean()),
 });
 export type Plugin = Static<typeof Plugin>;
 

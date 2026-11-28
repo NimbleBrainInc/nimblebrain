@@ -36,6 +36,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { connectorListListings } from "../helpers/connector-list-catalog.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
@@ -626,6 +627,18 @@ describe("manage_connectors.remove_oauth_client", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Point the harness's Browse at the fixture connector list, converted to the
+ * path catalog an operator mounts. Set just before a Browse read: an install
+ * by id with a listing in place goes through plugin install, which this stub
+ * runtime does not carry.
+ */
+function browseFixtureListings(h: Harness): void {
+  const listings = connectorListListings(CONNECTOR_FIXTURE_DIR, join(h.workDir, "browse"));
+  h.runtime.getCatalogListings = () => listings;
+}
+
 // list_directory — oauthClientConfigured flag for static entries
 // ─────────────────────────────────────────────────────────────────────
 
@@ -643,6 +656,7 @@ describe("manage_connectors.list_directory", () => {
 
   test("aggregates entries from the catalog directory by default", async () => {
     const tool = buildTool(h, ADMIN_USER);
+    browseFixtureListings(h);
     const result = await tool.handler({ action: "list_directory" });
     expect(result.isError).toBe(false);
     const entries = structured(result).entries ?? [];
@@ -651,6 +665,7 @@ describe("manage_connectors.list_directory", () => {
 
   test("static entry shows oauthClientConfigured: false before set_oauth_client runs", async () => {
     const tool = buildTool(h, ADMIN_USER);
+    browseFixtureListings(h);
     const result = await tool.handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
     expect(dropbox).toBeDefined();
@@ -666,6 +681,7 @@ describe("manage_connectors.list_directory", () => {
       clientSecret: "sec",
     });
 
+    browseFixtureListings(h);
     const result = await tool.handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
     expect(dropbox?.oauthClientConfigured).toBe(true);
@@ -970,6 +986,7 @@ describe("manage_connectors.uninstall of a static-auth connector", () => {
   });
 
   async function oauthClientConfigured(): Promise<boolean | undefined> {
+    browseFixtureListings(h);
     const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
     return (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID)
       ?.oauthClientConfigured;
@@ -2158,6 +2175,7 @@ describe("manage_connectors with an instance OAuth client", () => {
 
   test("Browse reports the entry configured with no workspace setup", async () => {
     await declareDropboxInstanceClient();
+    browseFixtureListings(h);
     const result = await buildTool(h, ADMIN_USER).handler({ action: "list_directory" });
     const dropbox = (structured(result).entries ?? []).find((e) => e.id === DROPBOX_ID);
     expect(dropbox?.oauthClientConfigured).toBe(true);
@@ -2251,6 +2269,7 @@ describe("manage_connectors with an instance OAuth client", () => {
 
   test("the personal catalog offers a static entry only when the instance holds its client", async () => {
     const tool = buildTool(h, NON_ADMIN_USER);
+    browseFixtureListings(h);
     const ids = async () =>
       (
         (await tool.handler({ action: "list_personal_catalog" })).structuredContent as {

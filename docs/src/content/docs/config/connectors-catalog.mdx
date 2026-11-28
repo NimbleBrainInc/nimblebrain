@@ -9,7 +9,7 @@ The **Plugins → Browse plugins** list is built from **catalogs**: [AI Catalog]
 
 Installing a row installs a **plugin**: the item at the row's address, from that item's own artifact. The runtime fetches the entry's `url` once and installs only bytes that match its `digest` (an entry carrying its artifact inline as `data` is verified over the data's [canonical JSON form](https://www.rfc-editor.org/rfc/rfc8785)). An artifact that does not match is refused and nothing is installed. Each server's record, a [`ServerDetail`](https://github.com/modelcontextprotocol/registry), comes from the archive (`ai.nimblebrain/servers/<key>.json`) and decides the connector: URL, auth, transport, scopes, and authorization parameters; the listing's own fields grant nothing. A plugin that runs a `stdio` server is refused: the runtime connects to remote MCP servers and does not acquire, verify, or execute downloadable code. A connector or a skill listed on its own installs the same way, as a one-item plugin.
 
-The install is recorded on its owner (the workspace, or the person for a [personal install](/using/personal-connectors/)): the address, the digest it was installed at, and exactly the connectors, skills and conversation starters it produced. Uninstalling removes exactly those. A connector two installed plugins use stays until the last of them is removed. A digest that moves in the listing is an update an admin applies (`update_plugin`); nothing updates on its own. When an update changes how one of the plugin's connectors is reached or signed in to (its URL, scopes or OAuth client), the connector moves to the new settings and has to be connected again. A connector you added yourself is never taken over by a plugin, even one naming the same server at the same URL: the install is refused until you remove it. Adding a server by its URL is a separate capability, available only on a local install (`npx nimblebrain`), and never becomes a plugin.
+The install is recorded on its owner (the workspace, or the person for a [personal install](/using/personal-connectors/)): the address, the digest it was installed at, and exactly the connectors, skills and conversation starters it produced. Uninstalling removes exactly those. A connector two installed plugins use stays until the last of them is removed. A digest that moves in an `available` listing is an update an admin applies (`update_plugin`); a `required` catalog's items are updated by the runtime itself ([Required catalogs](#required-catalogs)). When an update changes how one of the plugin's connectors is reached or signed in to (its URL, scopes or OAuth client), the connector moves to the new settings and has to be connected again. A connector you added yourself is never taken over by a plugin, even one naming the same server at the same URL: the install is refused until you remove it. Adding a server by its URL is a separate capability, available only on a local install (`npx nimblebrain`), and never becomes a plugin.
 
 ## Catalogs: what Browse lists
 
@@ -29,12 +29,12 @@ The install is recorded on its owner (the workspace, or the person for a [person
 | Field | Meaning |
 |---|---|
 | `source` | An `https` URL of an AI Catalog document (`http` only to a loopback host), or a path you mount: a file holding one, or a directory holding `ai-catalog.json` or `.well-known/ai-catalog.json`. A relative path resolves against the config file's directory. |
-| `policy` | `available` offers the items to install. `required` marks a catalog to be installed into every workspace; that reconcile is not built yet, so today a required catalog's items are offered like an available one's. |
+| `policy` | `available` offers the items to install. `required` installs every item into every workspace (see [Required catalogs](#required-catalogs)). |
 | `sha256` | Pins the listing's bytes. Bytes that do not match are refused and logged, and the last good copy is kept. A pinned listing is read once and never refreshed. **A `required` catalog must be pinned**: the config is refused at load without one. |
-| `name` | The catalog part of an item's address. Default: from the source, the domain label before the last (`nimblebrain` for `catalog.nimblebrain.ai`) or a path's last segment (`local`). Two catalogs that derive one name are refused until one sets `name`. `curated` is reserved. |
+| `name` | The catalog part of an item's address. Default: from the source, the domain label before the last (`nimblebrain` for `catalog.nimblebrain.ai`) or a path's last segment (`local`). Two catalogs that derive one name are refused until one sets `name`. |
 | `refreshMinutes` | How often an unpinned listing is read again. Default 15. |
 
-With no `catalogs` key, the instance reads NimbleBrain's catalog at `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json` ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai/.well-known/ai-catalog.json) by default). An empty list reads no listings, so Browse lists only a mounted directory's own records (see [What a row shows](#what-a-row-shows)). Only the seed config sets it; the override file cannot.
+With no `catalogs` key, the instance reads NimbleBrain's catalog at `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json` ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai/.well-known/ai-catalog.json) by default). An empty list reads no listings, so Browse lists nothing. Only the seed config sets it; the override file cannot.
 
 Each listing is:
 
@@ -55,15 +55,55 @@ A row is one listing entry: its `displayName`, `description` and `tags`, and fro
 
 The same server listed by two catalogs is a row under each, with no precedence between them. To prefer one catalog's item, leave it out of the other.
 
-A row shows the setup its install will ask for. Setup a listing does not carry yet (a static entry's OAuth app portal, a broker's fields) is read from the connector list's record of that server, below; an entry whose auth needs none (`dcr`, `none`) is a row from its listing alone, and a connector listed on its own is a row from its inline record. An entry Browse cannot show (no server or several, or setup nothing describes) is logged once per read; it still installs by its address.
+Every row's status comes from its listing alone, and Browse never opens an artifact. A connector listed on its own (a bare connector, below) carries its whole server record inline, so its row also carries everything the record says: a static entry's OAuth app portal and secret key, a broker's fields, secret headers. A plugin entry's listing names only its server's auth, so for any auth but `dcr` and `none` its row is marked `setupFromArtifact`. When an admin opens its set-up or installs it, `manage_connectors get_setup` reads those details from that one plugin's verified artifact (its `ai.nimblebrain/servers/<key>.json`), once, cached by digest. `set_oauth_client` takes the row's `address` the same way, so a plugin's OAuth client can be set up before it is installed. An entry Browse cannot show (no server or several, or a type it cannot install) is logged once per read; it still installs by its address.
 
-When `NB_CURATED_CATALOG_DIR` mounts a directory, its records that no listing names (fleet services, tenant entries) are rows of the reserved catalog `curated`, and install from that directory as connectors, with no plugin record.
+### When an item leaves its catalog
+
+| Catalog | Item removed from it, or the catalog removed from `catalogs` |
+|---|---|
+| `available` | Stays installed. The plugin list shows it as no longer offered, and it cannot be updated; an admin removes it when they choose. |
+| `required` | Uninstalled from every workspace by the required reconcile. |
+
+An entry the listing drops as invalid has not left its catalog. While any entry of a listing is invalid, nothing from that catalog shows as no longer offered or is uninstalled, and an installed item whose entry is invalid stays as it is; the catalog's valid entries install and update as usual.
+
+## Required catalogs
+
+A `required` catalog's items are in every workspace, including each workspace created later, and nobody can remove one there. The runtime keeps that true itself: at startup, when a workspace is created, and every five minutes it installs each item the catalog lists into every workspace that lacks it (a few workspaces at a time), updates one whose digest the pin moved, and uninstalls one the catalog no longer lists. A required catalog that cannot be read changes nothing until it can be. One whose listing has an invalid entry removes nothing until the listing is clean. Nothing has to be run by hand, and a pass with nothing to do fetches nothing.
+
+- **Pinned.** A required catalog must carry `sha256`, so what every workspace receives changes only when you move the pin and restart.
+- **Workspaces only.** A required item belongs to each workspace. Nobody installs one for themselves, since they already have it in each of their workspaces.
+- **Cannot be removed.** Uninstalling a required item, by its address or by one of its connectors, is refused with `REQUIRED`; the plugin page offers no Remove. To take an item away, drop it from the catalog; to keep it but let workspaces remove it, set the catalog's policy to `available`.
+- **Sign-in is still each workspace's.** An item whose server signs in with OAuth is installed as a connection awaiting sign-in: it is on the Plugins page with **Connect**, and a workspace admin signs it in for that workspace. Nobody is signed in on another's behalf. An `auth: static` server needs its OAuth client before it can be installed at all, so declare an [instance OAuth client](#an-oauth-client-for-the-whole-instance) for it, or it waits until each workspace sets one up.
+- **One failure stays one failure.** An item that cannot be installed in a workspace (a connector added by hand under its name, a missing OAuth client) is logged once and tried again on the next pass; every other item and workspace goes ahead.
+
+## Path catalogs
+
+A `catalogs` entry whose `source` is a path reads an AI Catalog listing from a file or directory you mount, beside every other catalog. It is how a deployment offers servers a public catalog cannot carry: `auth: static` entries that need your OAuth app, brokered toolkits (`composio`, `smithery`), a fleet service, a server you are developing. Unpinned, it is read again every `refreshMinutes`, so an edit to a mounted ConfigMap reaches Browse within that interval without a restart; pinned, it is read once.
+
+### A bare connector
+
+A server listed on its own is an entry of type `application/vnd.nimblebrain.server+json` whose `data` is the server's `ServerDetail` record and whose `digest` is `sha256:` and the hex SHA-256 of that record's [canonical JSON form](https://www.rfc-editor.org/rfc/rfc8785). Install verifies the record against the digest and connects from it, exactly as it connects a plugin's server. A connector installed before plugins existed also reads its record here.
+
+### Converting a connector list
+
+The connector-list format below (`{servers: [...]}` files) is what you author; the runtime reads only AI Catalog listings. Convert a directory or file of them into a listing of bare connectors:
+
+```bash
+bun run catalog:convert ./connectors /etc/nimblebrain/catalogs/local --publisher acme.example
+# writes /etc/nimblebrain/catalogs/local/ai-catalog.json
+```
+
+Each server becomes one entry named by its server name (`io.acme.support/mcp` is `io-acme-support-mcp@local` when the catalog is named `local`), with its title, description, icon, category and tags as the row's display. The conversion is strict: an entry the runtime would drop fails it, every problem is printed, and nothing is written. Mount the written directory and add it to `catalogs`:
+
+```json
+{ "source": "/etc/nimblebrain/catalogs/local", "policy": "available" }
+```
 
 ## Where the connector list lives
 
-The connector list supplies the setup a Browse row shows, a mounted directory's `curated` rows, and the records of connectors installed before plugins were. It has one source at a time.
+The connector list holds the server records an installed connector reads (its display, host UI, OAuth client setup, `adminTools`) when no plugin record of its owner supplies one, such as a connector installed before plugins were. It reads, first per server name: the owner's installed plugins' records, then every configured listing's [bare connectors](#a-bare-connector), then the pinned list below.
 
-**By default, the NimbleBrain plugin catalog.** The runtime reads the connector list of the catalog at [`NB_PLUGIN_CATALOG_URL`](/config/environment/#connectors-catalog) ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai)), the same catalog its [connector skills](/using/skills/#connector-skill-overlays) come from. A source checkout, `npx nimblebrain`, and a release image all show the same list.
+**The pinned list: the NimbleBrain plugin catalog's.** The runtime reads the connector list of the catalog at [`NB_PLUGIN_CATALOG_URL`](/config/environment/#connectors-catalog) ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai)), the same catalog its [connector skills](/using/skills/#connector-skill-overlays) come from. A source checkout, `npx nimblebrain`, and a release image all show the same list.
 
 - **Pinned.** The list is used only when its sha256 is `NB_PLUGIN_CATALOG_CONNECTORS_SHA256`, which each release compiles in. It is asked for at `nimblebrain/connectors/<sha256>.yaml`, a copy a catalog keeps for good, and then at `nimblebrain/connectors.yaml`, the catalog's current build. A list that does not match is refused and logged with both digests.
 - **Cached.** A verified list is kept in the work directory (`cache/plugin-catalog/connectors/<sha256>.yaml`), so a restart needs no network.
@@ -77,19 +117,9 @@ The connector list supplies the setup a Browse row shows, a mounted directory's 
 
 The NimbleBrain catalog's list holds the connectors that install with nothing to configure (`auth: dcr`). To offer your own list, publish a catalog in the same shape and point `NB_PLUGIN_CATALOG_URL` and both pins at it.
 
-**When `NB_CURATED_CATALOG_DIR` is set, a directory.** It replaces the plugin catalog wholesale; the two are never merged, so every entry has one place it came from. A mounted directory is trusted by whoever mounts it, so it takes no pin and an edit applies on the next read. Use it for entries a public catalog cannot carry: `auth: static` entries that need your OAuth app, brokered toolkits (`composio`, `smithery`), a server you are developing. Every `*.yaml`, `*.yml`, and `*.json` in it is read in sorted filename order and aggregated into one catalog.
-
-Splitting curation across files is the intended shape, not a workaround — `curated.yaml`, `composio.yaml`, and one per gateway keep unrelated curation in separate reviewable files that still roll up to a single list. Each file is validated on its own, so a diagnostic names the file it came from, and a file that cannot be read or parsed is reported without emptying the rest of the catalog. Two files carrying the same server id resolve first-file-wins.
-
-A directory is re-read on every lookup, so editing a mounted ConfigMap takes effect without restarting the pod.
-
-<Aside type="note">
-  **Filling the directory is not the runtime's job.** A GitOps ConfigMap, an operator with a text editor, or a job that mirrors some upstream index all do the same thing: write `ServerDetail` files. That is the whole extension point — pointing the platform at a second source of connectors means writing files into this directory, not configuring the runtime.
-</Aside>
-
 ## Adding a new OAuth connector
 
-Add the entry to your deployment's catalog: the directory [`NB_CURATED_CATALOG_DIR`](/config/environment/#connectors-catalog) points at, or the catalog you publish at `NB_PLUGIN_CATALOG_URL`. Either way the file is a list of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
+Add the entry to your deployment's connector list and [convert it](#converting-a-connector-list) into the path catalog you mount. The list is a set of upstream `ServerDetail` records; platform-specific fields live under the reverse-DNS extension key `_meta["ai.nimblebrain/connector"]`.
 
 ### 1. Pick the auth flow
 
@@ -101,7 +131,7 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
 - **`provider`** names a credential provider that supplies the transport credential server-side, with no user or OAuth client. Two things use it: the platform's own connectors, whose credential the runtime mints against the fleet authorizer, and a **gateway** you hold one account key for — see [gateway endpoints](#auth-provider-for-a-gateway-endpoint) below.
 
 <Aside type="caution">
-  NimbleBrain's plugin catalog lists **DCR entries only**: connectors that install with nothing to configure, so a fresh install has a full Browse with no setup. Everything else, including `auth: static` and brokered entries, belongs in the directory `NB_CURATED_CATALOG_DIR` points at.
+  NimbleBrain's catalog lists DCR, brokered and `auth: static` plugins. A brokered one shows only where this instance configures its broker, and a static one asks a workspace admin for an OAuth client first, unless the instance declares one. A server only your deployment can offer (your own OAuth app, a fleet service) belongs in your own [path catalog](#path-catalogs).
 </Aside>
 
 <Aside type="caution" title="A brokered entry must be in your catalog">
@@ -109,7 +139,7 @@ The kinds and what each asks of a *user* are documented once, in [Connectors →
   create a connection on your account. Like every install, it is built from
   **your** catalog's entry for the id, and an id the catalog does not publish is
   refused — which means a brokered connector reaches your users only through
-  `NB_CURATED_CATALOG_DIR`.
+  a catalog you publish or mount.
 </Aside>
 
 ### 2. Add the YAML entry
@@ -416,7 +446,7 @@ To replace a static-auth connector's OAuth client, open its detail page and edit
 
 ## Catalog file format
 
-Each file in the catalog directory is a YAML or JSON document with one of these shapes:
+A connector list, the input to [`catalog:convert`](#converting-a-connector-list), is a file or a directory of files, each a YAML or JSON document with one of these shapes:
 
 ```yaml
 servers:
@@ -442,21 +472,22 @@ metadata:
   name: nimblebrain-connectors-catalog
   namespace: nimblebrain
 data:
-  acme-catalog.yaml: |
-    servers:
-      - name: io.acme.support/mcp
-        title: Acme Support
-        description: Internal support tooling
-        version: "1.0.0"
-        icons:
-          - src: https://static.acme.example/icons/support.png
-        remotes:
-          - type: streamable-http
-            url: https://mcp.acme.example/support
-        _meta:
-          ai.nimblebrain/connector:
-            defaultScope: workspace
-            auth: dcr
+  # bun run catalog:convert acme-catalog.yaml out/ --publisher acme.example
+  ai-catalog.json: |
+    {
+      "specVersion": "0.9",
+      "host": { "displayName": "acme.example", "identifier": "acme.example" },
+      "entries": [
+        {
+          "identifier": "urn:air:acme.example:io-acme-support-mcp:server",
+          "displayName": "Acme Support",
+          "description": "Internal support tooling",
+          "type": "application/vnd.nimblebrain.server+json",
+          "data": { "name": "io.acme.support/mcp", "title": "Acme Support", "…": "…" },
+          "digest": "sha256:…"
+        }
+      ]
+    }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -467,12 +498,9 @@ spec:
     spec:
       containers:
         - name: api
-          env:
-            - name: NB_CURATED_CATALOG_DIR
-              value: /etc/nimblebrain/connectors
           volumeMounts:
             - name: connectors-catalog
-              mountPath: /etc/nimblebrain/connectors
+              mountPath: /etc/nimblebrain/catalogs/local
               readOnly: true
       volumes:
         - name: connectors-catalog
@@ -480,7 +508,7 @@ spec:
             name: nimblebrain-connectors-catalog
 ```
 
-Mount as many keys into that directory as curation needs — each becomes one catalog file. Because the directory is re-read on every lookup, updating the ConfigMap changes Browse without restarting the pod.
+The ConfigMap holds the converted listing under the key `ai-catalog.json` (`bun run catalog:convert` writes it), and `nimblebrain.json` names the mount: `{ "source": "/etc/nimblebrain/catalogs/local", "policy": "available" }`. An unpinned path catalog is read again every `refreshMinutes`, so updating the ConfigMap changes Browse without restarting the pod.
 
 ### Validation
 
@@ -517,7 +545,7 @@ It reports every entry that would be dropped — by the source's schema and dedu
   connectors/platform.yaml[4:io.example/mcp] dropped — invalid ServerDetail: /description must NOT have more than 100 characters
 ```
 
-Offline and deterministic, unlike the DCR probe below, so it is cheap enough to gate every catalog change. `bun run check:catalog-schema` runs it over the plugins demo catalog as part of `bun run verify`; the repo that owns a catalog (a published one, or the directory `NB_CURATED_CATALOG_DIR` points at) should run it against that catalog.
+Offline and deterministic, unlike the DCR probe below, so it is cheap enough to gate every catalog change. `bun run check:catalog-schema` runs it over the plugins demo catalog as part of `bun run verify`; the repo that owns a connector list (a published catalog's, or the one a deployment converts into its path catalog) should run it against that list.
 
 ## Catalog rot detection
 
@@ -540,7 +568,7 @@ Steps 2–4 are the discovery a connector's sign-in runs (the MCP SDK's own, the
 
 An entry passes only if every step succeeds; step 6 is skipped when the AS advertises no `authorization_endpoint`. When step 6 meets a bot challenge (Cloudflare's `cf-mitigated: challenge`) instead of the vendor's answer, the entry passes marked ⚠ unverified: a script cannot pass the challenge, a person's browser can, and step 5 has already accepted the redirect URI. Steps 5 and 6 are what catch "DCR theater" — a vendor that ships the RFC 7591 endpoints but enforces a parallel host allowlist the spec is meant to make obsolete, which discovery alone reports as healthy.
 
-In this repo it is a **manual CLI** — deliberately, since the catalog it needs to check is deployment config living in the directory `NB_CURATED_CATALOG_DIR` points at, not in the image. The automated gate runs in the deploy repo alongside that real catalog, so a vendor going down or dropping DCR support breaks the catalog's own PR. It is not part of `bun run verify`, which stays offline.
+In this repo it is a **manual CLI** — deliberately, since the catalog it needs to check is deployment config, the connector list a deployment converts into its path catalog, not in the image. The automated gate runs in the deploy repo alongside that real catalog, so a vendor going down or dropping DCR support breaks the catalog's own PR. It is not part of `bun run verify`, which stays offline.
 
 ## Where the secrets live
 
@@ -588,13 +616,13 @@ Startup fails when a declared client has no `clientId` or no secret. An id the c
 
 Operators upgrading from a release before the `ServerDetail` alignment landed should be aware of these one-time migrations:
 
-- **`NB_CATALOG_PATH` and `NB_STDIO_CATALOG_PATH` removed.** Point `NB_CURATED_CATALOG_DIR` at a directory of `ServerDetail` YAML / JSON files.
+- **`NB_CATALOG_PATH`, `NB_STDIO_CATALOG_PATH` and `NB_CURATED_CATALOG_DIR` removed.** Convert the directory of `ServerDetail` YAML / JSON files with `bun run catalog:convert` and mount the listing it writes as a [path catalog](#path-catalogs).
 - **Catalog id format.** A catalog listing's `id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthClients[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
 - **Connector `serverName` slug.** A catalog install persists a slugified canonical reverse-DNS form (`com-canva-mcp`), and every connector entry carries its `serverName`.
 - **`packages[]`-only entries are not installable.** The runtime does not acquire or spawn a server's code, so a catalog entry advertising only `packages[]` never appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
 
 ## Related
 
-- [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_PLUGIN_CATALOG_URL` and its pins, `NB_CURATED_CATALOG_DIR`.
+- [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_PLUGIN_CATALOG_URL` and its pins.
 - [Workspace JSON](/config/workspace-json/) — `oauthClients`, `connectorsAllowList`.
 - [Credentials](/config/credentials/) — where a connector's credentials live and who can read them.

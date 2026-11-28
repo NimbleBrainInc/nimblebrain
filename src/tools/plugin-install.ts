@@ -46,6 +46,12 @@
  * and signs in again, since its credentials belong to the old settings. A
  * connection another plugin supplies is left as that plugin's record says.
  *
+ * **Required.** An item of a `required` catalog installed into a workspace is
+ * marked `required` on its record, whoever installed it. A person's uninstall
+ * of it is refused; only the required reconcile (`plugin-required.ts`), which
+ * keeps every workspace's required items present, removes it. A person cannot
+ * install one for themselves: it is already in every workspace they are in.
+ *
  * A connector its owner added is never a plugin's: it carries no
  * `installedBy`, gets no record, and a plugin whose server would land on it is
  * refused rather than adopting it, even at the same URL. Uninstall never
@@ -55,6 +61,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ListedEntry } from "../catalogs/listing.ts";
+import type { CatalogPolicy } from "../config/catalogs.ts";
 import { projectServerDetailToCatalogListing } from "../connectors/catalog/projection.ts";
 import type { CatalogListing } from "../connectors/catalog/types.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
@@ -122,6 +129,21 @@ function ownerFields(owner: PluginOwner): Record<string, unknown> {
   return owner.kind === "workspace"
     ? { scope: "workspace", wsId: owner.wsId }
     : { scope: "identity" };
+}
+
+/** The policy of the configured catalog named `catalog`, or null when none is configured. */
+export function catalogPolicy(runtime: Runtime, catalog: string): CatalogPolicy | null {
+  return (
+    runtime
+      .getCatalogListings()
+      .catalogs()
+      .find((c) => c.name === catalog)?.policy ?? null
+  );
+}
+
+/** Whether `entry` installs into `owner` as a required item. */
+function requiredFor(runtime: Runtime, owner: PluginOwner, entry: ListedEntry): boolean {
+  return owner.kind === "workspace" && catalogPolicy(runtime, entry.catalog) === "required";
 }
 
 /** The listing entry at `address`, from the catalogs' cached listings. */
@@ -297,9 +319,9 @@ function recordOf(
   digest: string,
   contents: PluginContents,
   skills: InstalledPluginSkill[],
-  installedAt: string,
-  updatedAt?: string,
+  times: { installedAt: string; updatedAt?: string; required: boolean },
 ): InstalledPluginRecord {
+  const { installedAt, updatedAt, required } = times;
   return {
     address: entry.address,
     digest,
@@ -309,6 +331,7 @@ function recordOf(
     connectors: contents.servers.map((s) => ({ key: s.key, name: s.name, server: s.detail })),
     skills,
     starters: contents.starters,
+    ...(required ? { required: true as const } : {}),
   };
 }
 
@@ -332,6 +355,12 @@ async function installPluginNow(
   if (!entry) {
     return err("NOT_IN_CATALOG", `"${address}" is not listed by any of this instance's catalogs.`);
   }
+  if (owner.kind === "person" && catalogPolicy(ctx.runtime, entry.catalog) === "required") {
+    return err(
+      "REQUIRED",
+      `${address} is required by this instance, so it is installed in every workspace already; it is not installed for one person.`,
+    );
+  }
   const store = ctx.runtime.getPluginRecords();
   const records = await store.list(owner);
   const prior = records.find((r) => r.address === address);
@@ -350,13 +379,10 @@ async function installPluginNow(
   if ("isError" in connected) return connected;
   // Converge first, then write the record: a rerun of a stopped install lands here again.
   const skills = materializeSkills(ctx.runtime.getWorkDir(), owner, address, contents);
-  const record = recordOf(
-    entry,
-    digest,
-    contents,
-    skills,
-    prior?.installedAt ?? new Date().toISOString(),
-  );
+  const record = recordOf(entry, digest, contents, skills, {
+    installedAt: prior?.installedAt ?? new Date().toISOString(),
+    required: requiredFor(ctx.runtime, owner, entry),
+  });
   await store.put(owner, record);
 
   const alreadyInstalled = !!prior && connected.connected.every((c) => c.alreadyInstalled);
@@ -426,19 +452,24 @@ async function releaseConnections(
   return { removed, kept };
 }
 
-/** Uninstall the plugin at `address` from `owner`. */
+/**
+ * Uninstall the plugin at `address` from `owner`. A required item is removed
+ * only by the required reconcile (`asReconcile`), never at a person's request.
+ */
 export function uninstallPlugin(
   ctx: PluginInstallContext,
   owner: PluginOwner,
   address: string,
+  opts: { asReconcile?: boolean } = {},
 ): Promise<ToolResult> {
-  return oneAtATime(owner, () => uninstallPluginNow(ctx, owner, address));
+  return oneAtATime(owner, () => uninstallPluginNow(ctx, owner, address, opts));
 }
 
 async function uninstallPluginNow(
   ctx: PluginInstallContext,
   owner: PluginOwner,
   address: string,
+  opts: { asReconcile?: boolean },
 ): Promise<ToolResult> {
   const refused = await ctx.ops.admit(owner);
   if (refused) return refused;
@@ -446,6 +477,12 @@ async function uninstallPluginNow(
   const records = await store.list(owner);
   const record = records.find((r) => r.address === address);
   if (!record) return err("NOT_INSTALLED", `${address} is not installed here.`);
+  if (record.required && !opts.asReconcile) {
+    return err(
+      "REQUIRED",
+      `${address} is required in every workspace by this instance's operator, so it cannot be uninstalled. Its catalog decides whether it stays.`,
+    );
+  }
   const others = records.filter((r) => r !== record);
 
   removeSkills(ctx.runtime, owner, record);
@@ -543,7 +580,11 @@ async function updatePluginNow(
   const skills = materializeSkills(ctx.runtime.getWorkDir(), owner, address, contents);
   await store.put(
     owner,
-    recordOf(entry, digest, contents, skills, record.installedAt, new Date().toISOString()),
+    recordOf(entry, digest, contents, skills, {
+      installedAt: record.installedAt,
+      updatedAt: new Date().toISOString(),
+      required: requiredFor(ctx.runtime, owner, entry),
+    }),
   );
   return {
     content: textContent(`Updated ${address} to ${digest}.${reconnectedNote(connected.connected)}`),

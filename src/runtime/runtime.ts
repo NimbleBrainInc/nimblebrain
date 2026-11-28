@@ -12,6 +12,7 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
 import { loadBrand } from "../brand/index.ts";
+import { listedServerRecords } from "../catalogs/listed-records.ts";
 import {
   type CatalogListings,
   createCatalogListings,
@@ -320,6 +321,10 @@ import {
 import { McpSource } from "../tools/mcp-source.ts";
 import { adoptExistingInstalls } from "../tools/plugin-adopt.ts";
 import { ungrantedPluginGuidance } from "../tools/plugin-request.ts";
+import {
+  type RequiredReconcileResult,
+  reconcileRequiredPlugins,
+} from "../tools/plugin-required.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { isReservedResourceScheme, readableRecordTemplates } from "../tools/resource-schemes.ts";
 import {
@@ -774,6 +779,12 @@ export type WorkspaceRestoreResult =
 const WORKSPACE_PURGE_INTERVAL_MS = 60 * 60_000;
 
 /**
+ * How often the required reconcile runs on its own: it notices a required
+ * catalog's listing that could not be read before, and retries what failed.
+ */
+const REQUIRED_RECONCILE_INTERVAL_MS = 5 * 60_000;
+
+/**
  * What narrows who may call a connector's tools: the catalog's `adminTools`,
  * and the lifecycle handlers its server binds, which only the host may call.
  */
@@ -905,6 +916,10 @@ export class Runtime {
   private readonly _tombstoneOps = new Map<string, Promise<void>>();
   /** The purge reconcile's pass in flight, and its timer. */
   private _purgePass: Promise<void> | null = null;
+  /** Required reconcile passes, run one after another (`reconcileRequiredPlugins`). */
+  private _requiredChain: Promise<unknown> = Promise.resolve();
+  private _requiredTimer: ReturnType<typeof setInterval> | null = null;
+  private _requiredQueued = false;
   private _purgeTimer: ReturnType<typeof setInterval> | null = null;
   /**
    * Every bound contract tool, by wire name (`<source>__<tool>`), that no call
@@ -1126,12 +1141,23 @@ export class Runtime {
     // is the reserved-name list in the gateway module, not this ordering.
     registerGatewayCredentialProviders();
 
+    // The catalogs Browse lists (ADR-0077). A block that cannot work (a
+    // required catalog without a pin, two catalogs of one name) refuses the boot.
+    const catalogs = resolveCatalogs(config.catalogs, { configPath: config.configPath });
+    const catalogListings = createCatalogListings({
+      catalogs,
+      cacheDir: join(workDir, "cache", "catalogs"),
+    });
+
     // Instance OAuth clients, bound to the URL the catalog publishes for each id
     // before any connector starts: every connect resolves its client through this
     // bind, and it is what keeps the operator's secret on the catalog's server.
+    // A listing's bare connector is read first, as every connector-list read is.
     // Throws on a declared client with no client id or secret.
     await bindInstanceOAuthClients(() =>
-      new ConnectorCatalog(catalogLocation(workDir)).catalogByIdMap(),
+      new ConnectorCatalog(catalogLocation(workDir), undefined, async () =>
+        listedServerRecords(await catalogListings.snapshots()),
+      ).catalogByIdMap(),
     );
     // Each remote connection reads its entry's in-band auth errors from the
     // catalog when its source is built: a fresh read, so an edit reaches the
@@ -1150,10 +1176,6 @@ export class Runtime {
     // block over them, read, validated and held to their contracts, so a setup
     // that cannot work refuses the boot here. Nothing is started from the
     // result yet; every plugin turned off reads nothing.
-    // The catalogs Browse lists (ADR-0077). A block that cannot work (a
-    // required catalog without a pin, two catalogs of one name) refuses the boot.
-    const catalogs = resolveCatalogs(config.catalogs, { configPath: config.configPath });
-
     const resolvedPlugins = checkConfiguredPlugins(config.plugins, {
       workDir,
       ...(config.configPath ? { configPath: config.configPath } : {}),
@@ -1395,10 +1417,7 @@ export class Runtime {
       getWorkspaceId,
     );
     rt._hostLoopback = hostLoopback;
-    rt._catalogListings = createCatalogListings({
-      catalogs,
-      cacheDir: join(workDir, "cache", "catalogs"),
-    });
+    rt._catalogListings = catalogListings;
     rt._pluginSkillRoots = pluginSkillRoots;
     rtHolder.rt = rt;
 
@@ -1581,12 +1600,9 @@ export class Runtime {
         catalogEntries: () => rt.getConnectorCatalog().catalogEntries(),
       });
 
-      // Boot-time visibility: the connector catalog is what Browse lists.
-      // Reading it here also fetches the pinned catalog's list on a first boot.
-      // Warn loudly if it yields zero entries (catalog unreachable, empty mount,
-      // mis-set NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
-      // than silent.
-      await warnIfCatalogEmpty(rt.getConnectorCatalog());
+      // Boot-time visibility: reading the connector list here also fetches the
+      // pinned catalog's list on a first boot, and an empty one is logged.
+      await warnIfCatalogEmpty(new ConnectorCatalog(catalogLocation(workDir)));
       // Read every catalog's listing once in the background, so the first
       // Browse finds a warm copy and an unreachable catalog is logged at boot.
       void rt._catalogListings.snapshots();
@@ -1596,6 +1612,9 @@ export class Runtime {
       // Deleted workspaces whose window has passed are purged now and on an
       // interval: their purge needs the bound plugins and the connector machinery.
       rt.startPurgeReconcile();
+      // Every workspace holds every required catalog's items (ADR-0076): now,
+      // for each workspace created later, and on an interval.
+      rt.startRequiredReconcile();
 
       rt._bootReady.resolve();
       return rt;
@@ -5994,7 +6013,11 @@ export class Runtime {
     owner?: PluginOwner,
     opts: { sharing?: ConnectorCatalog } = {},
   ): ConnectorCatalog {
-    const base = opts.sharing ?? new ConnectorCatalog(catalogLocation(this.getWorkDir()));
+    const base =
+      opts.sharing ??
+      new ConnectorCatalog(catalogLocation(this.getWorkDir()), undefined, async () =>
+        listedServerRecords(await this._catalogListings.snapshots()),
+      );
     return owner ? base.forOwner(() => this.installedServerRecords(owner)) : base;
   }
 
@@ -6019,6 +6042,59 @@ export class Runtime {
     } catch (err) {
       log.warn(`[plugins] adopting existing installs failed (non-fatal): ${String(err)}`);
     }
+  }
+
+  /**
+   * One pass of the required reconcile (`src/tools/plugin-required.ts`): every
+   * item of every `required` catalog installed in each workspace (or the ones
+   * named), and every required item no catalog requires any more removed.
+   * Passes run one after another, never two at once. Never throws.
+   */
+  reconcileRequiredPlugins(
+    opts: { wsIds?: readonly string[]; fetchImpl?: typeof fetch } = {},
+  ): Promise<RequiredReconcileResult> {
+    const pass = this._requiredChain.then(async () => {
+      // Loaded on use: the connector tools import the runtime.
+      const { kernelConnectorOps } = await import("../tools/connector-tools.ts");
+      return reconcileRequiredPlugins(
+        {
+          runtime: this,
+          ops: kernelConnectorOps(this),
+          ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+        },
+        opts.wsIds ? { wsIds: opts.wsIds } : {},
+      );
+    });
+    this._requiredChain = pass.catch((err: unknown) => {
+      log.warn(`[plugins] required reconcile failed; the next pass retries: ${String(err)}`);
+    });
+    return pass;
+  }
+
+  /**
+   * Run the required reconcile at boot, for each workspace created, and every
+   * {@link REQUIRED_RECONCILE_INTERVAL_MS}. With no required catalog the boot
+   * pass alone runs: it removes what a required catalog dropped from the
+   * configuration left behind.
+   */
+  private startRequiredReconcile(): void {
+    void this.reconcileRequiredPlugins().catch(() => {});
+    const anyRequired = this._catalogListings.catalogs().some((c) => c.policy === "required");
+    if (!anyRequired) return;
+    this._workspaceStore.onCreated((ws) => {
+      void this.reconcileRequiredPlugins({ wsIds: [ws.id] }).catch(() => {});
+    });
+    this._requiredTimer = setInterval(() => {
+      // An interval pass already waiting covers the next tick too.
+      if (this._requiredQueued) return;
+      this._requiredQueued = true;
+      void this.reconcileRequiredPlugins()
+        .catch(() => {})
+        .finally(() => {
+          this._requiredQueued = false;
+        });
+    }, REQUIRED_RECONCILE_INTERVAL_MS);
+    this._requiredTimer.unref?.();
   }
 
   /** The installed-plugin records of every owner (ADR-0077), stored beside each owner's connectors. */
@@ -7278,6 +7354,9 @@ export class Runtime {
   async shutdown(): Promise<void> {
     if (this._purgeTimer) clearInterval(this._purgeTimer);
     this._purgeTimer = null;
+    if (this._requiredTimer) clearInterval(this._requiredTimer);
+    this._requiredTimer = null;
+    await this._requiredChain.catch(() => {});
     await this.telemetryManager.shutdown();
     // Detach the tool-set watches first: each holds a source, and through its
     // listener the reconcile deps that close over this runtime. The lifecycle

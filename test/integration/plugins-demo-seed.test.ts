@@ -6,6 +6,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { writeDemoListing } from "../../scripts/dev-plugins-demo.ts";
 import {
   DEMO_WORKSPACES,
   MOCK_SERVERS,
@@ -15,7 +16,6 @@ import { type MockFleet, startMockFleet } from "../../scripts/lib/plugins-demo/m
 import { type SeedSummary, seedPluginsDemo } from "../../scripts/lib/plugins-demo/seed.ts";
 import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import type { PluginsListOutput } from "../../src/platform/schemas/plugins.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
@@ -32,7 +32,6 @@ let fleet: MockFleet | undefined;
 let runtime: Runtime | undefined;
 let handle: ServerHandle | undefined;
 let summary: SeedSummary;
-const previousCatalogDir = process.env[CATALOG_DIR_ENV];
 const realFetch = globalThis.fetch;
 
 /**
@@ -54,7 +53,7 @@ const SETUP_TIMEOUT_MS = 30_000;
 
 beforeAll(async () => {
   globalThis.fetch = offlineFetch;
-  process.env[CATALOG_DIR_ENV] = CATALOG_DIR;
+  writeDemoListing(join(workDir, "listing"));
   fleet = startMockFleet(MOCK_SERVERS);
   await seedPluginsDemo({ workDir, catalogDir: CATALOG_DIR, fleet });
   summary = await seedPluginsDemo({ workDir, catalogDir: CATALOG_DIR, fleet });
@@ -64,6 +63,7 @@ beforeAll(async () => {
     logging: { disabled: true },
     workDir,
     allowInsecureRemotes: true,
+    catalogs: [{ source: join(workDir, "listing"), policy: "available", name: "plugins-demo" }],
   });
   handle = startServer({ runtime, port: 0 });
 }, SETUP_TIMEOUT_MS);
@@ -73,8 +73,6 @@ afterAll(async () => {
   await runtime?.shutdown();
   fleet?.close();
   globalThis.fetch = realFetch;
-  if (previousCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = previousCatalogDir;
   cleanup();
 });
 

@@ -1,7 +1,8 @@
 # The Plugins page demo catalog (`bun run dev:plugins-demo`).
 #
-# The launcher points NB_CURATED_CATALOG_DIR here. Every entry is a remote
-# server at a fictional `.example` host, so nothing in the demo reaches a
+# The launcher converts it into the path catalog the demo config names
+# (`listing/ai-catalog.json`, as `bun run catalog:convert` does). Every entry
+# is a remote server at a fictional `.example` host, so nothing in the demo reaches a
 # vendor: an entry the seed installs without tokens stays "needs sign-in",
 # and clicking Connect fails at discovery instead of opening a real sign-in.
 # The seed (scripts/lib/plugins-demo/) installs some of these into the demo

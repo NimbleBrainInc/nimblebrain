@@ -52,6 +52,7 @@ export function ConnectorHeader({
   canManage,
   onChanged,
   onUninstall,
+  removable = true,
   meta,
 }: {
   installed: InstalledConnector;
@@ -59,6 +60,8 @@ export function ConnectorHeader({
   onChanged: () => void;
   /** Opens the page's Remove confirmation. Offered to a workspace admin only. */
   onUninstall: () => void;
+  /** False when its plugin is required in every workspace, so Remove is not offered. */
+  removable?: boolean;
   /** What the page adds about the connector under its description (whose account it uses, its apps). */
   meta?: ReactNode;
 }) {
@@ -181,6 +184,7 @@ export function ConnectorHeader({
           <ConnectorMenu
             installed={installed}
             canManage={canManage}
+            removable={removable}
             acting={acting}
             onDisconnect={() => setConfirmingDisconnect(true)}
             onUninstall={onUninstall}
@@ -344,11 +348,13 @@ export type ConnectorMenuItem =
  * What the ⋯ menu offers, decided here and only rendered by the component.
  * A member gets the documentation link and the details; a workspace admin also
  * gets Sign out — only for an established connection whose credential a person
- * authorized (`disconnectable`); a fleet connector has none — and Remove.
+ * authorized (`disconnectable`); a fleet connector has none — and Remove,
+ * unless its plugin is required in every workspace (`removable: false`).
  */
 export function connectorMenuItems(
   installed: InstalledConnector,
   canManage: boolean,
+  opts: { removable?: boolean } = {},
 ): ConnectorMenuItem[] {
   const items: ConnectorMenuItem[] = [];
   const docsUrl = installed.catalog?.docsUrl;
@@ -356,7 +362,7 @@ export function connectorMenuItems(
   if (canManage && installed.disconnectable && installed.state === "running") {
     items.push({ kind: "disconnect" });
   }
-  if (canManage) items.push({ kind: "uninstall" });
+  if (canManage && opts.removable !== false) items.push({ kind: "uninstall" });
   const details = connectorDetails(installed);
   if (details) items.push({ kind: "details", text: details });
   return items;
@@ -367,17 +373,19 @@ export function connectorMenuItems(
 function ConnectorMenu({
   installed,
   canManage,
+  removable,
   acting,
   onDisconnect,
   onUninstall,
 }: {
   installed: InstalledConnector;
   canManage: boolean;
+  removable: boolean;
   acting: boolean;
   onDisconnect: () => void;
   onUninstall: () => void;
 }) {
-  const items = connectorMenuItems(installed, canManage);
+  const items = connectorMenuItems(installed, canManage, { removable });
   if (items.length === 0) return null;
   const itemClass =
     "flex w-full cursor-default items-center px-3 py-1.5 text-sm outline-none data-[highlighted]:bg-foreground/10 data-[disabled]:opacity-50";

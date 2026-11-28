@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Plugin } from "../../_generated/platform-schemas/plugins";
 import {
   type CatalogListing,
+  getCatalogSetup,
   getInstalledConnectors,
   type InstalledConnector,
   initiateComposioIdentityConnect,
@@ -336,7 +337,14 @@ export function ConnectorDirectory({
   // wrote the keys, those values stay in the store with no connector attached —
   // deliberately: a retry reuses them, and unwinding a write to the credential
   // store on an unrelated failure is a delete this path has no business making.
-  const onInstall = async (entry: CatalogListing) => {
+  const onInstall = async (listed: CatalogListing) => {
+    let entry: CatalogListing;
+    try {
+      entry = await withSetup(listed);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
+      return;
+    }
     const fields = secretHeaderFields(entry.install);
     if (fields.length > 0) {
       setLoadError(null);
@@ -346,6 +354,21 @@ export function ConnectorDirectory({
     await runInstall(entry);
   };
 
+  // A plugin row whose setup is in its artifact gets its full install action
+  // first (`get_setup`): the set-up and install flows read it before install.
+  const withSetup = async (entry: CatalogListing): Promise<CatalogListing> =>
+    entry.setupFromArtifact && entry.address ? getCatalogSetup(entry.address) : entry;
+
+  // Set up a static row's OAuth client, its setup read first when its plugin holds it.
+  const onSetUp = async (listed: CatalogListing) => {
+    setLoadError(null);
+    try {
+      setSetupEntry(await withSetup(listed));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   // Install on the viewer's own account, granted into this workspace by the
   // same call, then sign in. The grant needs only the install, so it is
   // already in place when the sign-in's callback lands, and stands if the
@@ -353,8 +376,9 @@ export function ConnectorDirectory({
   // profile, with Connect). A connector already connected needs no sign-in: a
   // Connect on a live connection is refused as busy. Throws, so the dialog
   // shows the failure beside the choice that caused it.
-  const runPersonalInstall = async (entry: CatalogListing) => {
+  const runPersonalInstall = async (listed: CatalogListing) => {
     if (!wsId) throw new Error("No workspace to turn it on in.");
+    const entry = await withSetup(listed);
     const result = await installPersonalConnector(entry, wsId);
     if (result.alreadyInstalled) {
       const { connectors } = await listPersonalConnectors();
@@ -425,7 +449,7 @@ export function ConnectorDirectory({
         isStaticAuth={entry.install.kind === "remote-oauth" && entry.install.auth === "static"}
         oauthClientReady={entry.oauthClientConfigured === true}
         onInstall={() => onInstallClick(entry, workspaceInstalled)}
-        onSetUpAndInstall={() => setSetupEntry(entry)}
+        onSetUpAndInstall={() => void onSetUp(entry)}
       />
     );
   };
@@ -682,6 +706,7 @@ function DirectoryResults({
 export function oauthClientSetupTarget(entry: CatalogListing): OAuthClientSetupTarget {
   return {
     id: entry.id,
+    ...(entry.address ? { address: entry.address } : {}),
     name: entry.name,
     oauthClientSetup:
       entry.install.kind === "remote-oauth" ? entry.install.oauthClientSetup : undefined,

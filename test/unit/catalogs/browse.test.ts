@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { bareConnectorEntry } from "../../../scripts/lib/connector-list-to-ai-catalog.ts";
 import { browseCatalog, browseStatus } from "../../../src/catalogs/browse.ts";
 import { createCatalogListings } from "../../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../../src/connectors/catalog/catalog.ts";
+import type { ServerDetail } from "../../../src/connectors/catalog/server-detail.ts";
 import { listingBytes, listingEntry, pathCatalog } from "../../helpers/ai-catalog.ts";
 
 const none = { has: () => false };
@@ -28,8 +29,8 @@ describe("browseStatus", () => {
   });
 });
 
-/** A `ServerDetail` the connector list holds. */
-function record(name: string, meta: Record<string, unknown> = {}): Record<string, unknown> {
+/** A server's `ServerDetail` record. */
+function record(name: string, meta: Record<string, unknown> = {}): ServerDetail {
   return {
     name,
     title: `${name} (record title)`,
@@ -50,26 +51,9 @@ const STATIC_SETUP = {
 };
 
 let dir: string;
-let connectorDir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "nb-browse-"));
-  connectorDir = join(dir, "connectors");
-  mkdirSync(connectorDir);
-  writeFileSync(
-    join(connectorDir, "list.json"),
-    JSON.stringify({
-      servers: [
-        record("com.ahrefs/mcp"),
-        record("com.box/files", STATIC_SETUP),
-        record("us.zoom/mcp", { auth: "composio", composio: { toolkit: "zoom" } }),
-        record("ai.nimblebrain/web", {
-          auth: "provider",
-          providerAuth: { provider: "minted", config: {} },
-        }),
-      ],
-    }),
-  );
 });
 
 afterEach(() => {
@@ -83,28 +67,22 @@ function writeListing(name: string, entries: unknown[]): string {
 }
 
 const ahrefs = listingEntry({ name: "ahrefs", tags: ["seo"], category: "Marketing & websites" });
-const box = listingEntry({
-  name: "box",
-  servers: { box: { name: "com.box/files", auth: "static" } },
-});
-const zoom = listingEntry({
-  name: "zoom",
-  servers: { zoom: { name: "us.zoom/mcp", auth: "composio" } },
-});
+/** Bare connectors: each carries its record, and so its setup, inline. */
+const box = bareConnectorEntry(record("com.box/files", STATIC_SETUP), "catalog.test");
+const zoom = bareConnectorEntry(
+  record("us.zoom/mcp", { auth: "composio", composio: { toolkit: "zoom" } }),
+  "catalog.test",
+);
 
 function browse(
   files: Record<string, string>,
-  opts: { brokers?: { has(id: string): boolean }; configured?: boolean; pinned?: boolean } = {},
+  opts: { brokers?: { has(id: string): boolean }; configured?: boolean } = {},
 ) {
   return browseCatalog({
     listings: createCatalogListings({
       catalogs: Object.entries(files).map(([name, file]) => pathCatalog(name, file)),
       cacheDir: join(dir, "cache"),
     }),
-    // The pinned catalog's list is read through a function; a mounted directory is a path.
-    connectorCatalog: new ConnectorCatalog(
-      opts.pinned ? async () => ({ path: join(connectorDir, "list.json") }) : connectorDir,
-    ),
     brokers: opts.brokers ?? none,
     ...(opts.configured !== undefined
       ? { isOAuthClientConfigured: async () => opts.configured as boolean }
@@ -113,7 +91,7 @@ function browse(
 }
 
 describe("browseCatalog", () => {
-  test("a row shows the listing's fields, addressed name@catalog, with the record's install", async () => {
+  test("a row shows the listing's fields, addressed name@catalog, with its extension's install", async () => {
     const { entries, errors } = await browse({ nimblebrain: writeListing("nb", [ahrefs]) });
     expect(errors).toEqual([]);
     const row = entries.find((e) => e.address === "ahrefs@nimblebrain");
@@ -126,7 +104,7 @@ describe("browseCatalog", () => {
       tags: ["seo"],
       catalog: "nimblebrain",
       status: "ready",
-      install: { kind: "remote-oauth", url: "https://com.ahrefs.mcp.test/mcp", auth: "dcr" },
+      install: { kind: "remote-oauth", auth: "dcr" },
     });
   });
 
@@ -160,23 +138,18 @@ describe("browseCatalog", () => {
       ["ahrefs@nimblebrain", "Ahrefs"],
       ["ahrefs@vendor", "Ahrefs (vendor)"],
     ]);
-    expect(entries.find((e) => e.id === "com.box/files")?.address).toBe("box@nimblebrain");
+    expect(entries.find((e) => e.id === "com.box/files")?.address).toBe(
+      "com-box-files@nimblebrain",
+    );
   });
 
-  test("the connector list's records no listing names are listed under curated", async () => {
-    const { entries } = await browse({ nimblebrain: writeListing("nb", [ahrefs, zoom]) });
-    const curated = entries.filter((e) => e.catalog === "curated").map((e) => e.address);
-    // ahrefs and zoom are named by the listing (zoom hidden without its broker);
-    // box and the fleet service are the list's own.
-    expect(curated).toEqual(["com.box/files@curated", "ai.nimblebrain/web@curated"]);
-    expect(entries.find((e) => e.id === "ai.nimblebrain/web")?.status).toBe("ready");
+  test("every row comes from a listing entry; there is no curated catalog", async () => {
+    const { entries } = await browse({ nimblebrain: writeListing("nb", [ahrefs, box, zoom]) });
+    expect(entries.map((e) => e.catalog)).toEqual(["nimblebrain", "nimblebrain"]);
+    expect(entries.some((e) => e.address?.endsWith("@curated"))).toBe(false);
   });
 
-  test("an entry Browse cannot describe is left out: unlisted setup, several servers, another type", async () => {
-    const unlistedStatic = listingEntry({
-      name: "drive",
-      servers: { drive: { name: "com.google/drive", auth: "static" } },
-    });
+  test("an entry Browse cannot describe is left out: several servers, another type", async () => {
     const twoServers = listingEntry({
       name: "suite",
       servers: {
@@ -185,29 +158,55 @@ describe("browseCatalog", () => {
       },
     });
     const skill = { ...listingEntry({ name: "notes" }), type: "application/agent-skills+zip" };
-    const { entries } = await browse({
-      nimblebrain: writeListing("nb", [unlistedStatic, twoServers, skill]),
-    });
+    const { entries } = await browse({ nimblebrain: writeListing("nb", [twoServers, skill]) });
     expect(entries.filter((e) => e.catalog === "nimblebrain")).toEqual([]);
   });
 
-  test("with no directory mounted, the pinned list's records are never curated rows", async () => {
-    const { entries } = await browse(
-      { nimblebrain: writeListing("nb", [ahrefs, box]) },
-      {
-        pinned: true,
-      },
-    );
-    expect(entries.filter((e) => e.catalog === "curated")).toEqual([]);
-    // It still supplies the setup a static row shows.
-    const row = entries.find((e) => e.address === "box@nimblebrain");
-    expect(row?.install).toMatchObject({
+  test("a static plugin entry is a set-up row whose setup is in its artifact", async () => {
+    const staticPlugin = listingEntry({
+      name: "drive",
+      servers: { drive: { name: "com.google/drive", auth: "static" } },
+    });
+    const file = writeListing("nb", [staticPlugin]);
+    const before = await browse({ nimblebrain: file }, { configured: false });
+    const row = before.entries.find((e) => e.address === "drive@nimblebrain");
+    expect(row).toMatchObject({
+      id: "com.google/drive",
+      status: "setup",
+      setupFromArtifact: true,
+      oauthClientConfigured: false,
+      install: { kind: "remote-oauth", auth: "static" },
+    });
+    expect(row?.install).not.toHaveProperty("oauthClientSetup");
+    const after = await browse({ nimblebrain: file }, { configured: true });
+    expect(after.entries[0]?.status).toBe("ready");
+  });
+
+  test("a broker plugin entry is hidden without its broker and ready with it", async () => {
+    const gmail = listingEntry({
+      name: "gmail",
+      servers: { gmail: { name: "com.google/gmail", auth: "composio" } },
+    });
+    const file = writeListing("nb", [gmail]);
+    expect((await browse({ nimblebrain: file })).entries).toEqual([]);
+    const withBroker = await browse({ nimblebrain: file }, { brokers: composio });
+    expect(withBroker.entries[0]).toMatchObject({
+      address: "gmail@nimblebrain",
+      status: "ready",
+      setupFromArtifact: true,
+    });
+  });
+
+  test("a bare connector carries its setup inline and needs no artifact read", async () => {
+    const { entries } = await browse({ nimblebrain: writeListing("nb", [box]) });
+    expect(entries[0]?.setupFromArtifact).toBeUndefined();
+    expect(entries[0]?.install).toMatchObject({
       auth: "static",
       oauthClientSetup: STATIC_SETUP.oauthClientSetup,
     });
   });
 
-  test("a dcr entry the connector list does not hold is a row from its extension alone", async () => {
+  test("a dcr plugin entry is a row from its extension alone", async () => {
     const { entries } = await browse({
       nimblebrain: writeListing("nb", [listingEntry({ name: "linear" })]),
     });

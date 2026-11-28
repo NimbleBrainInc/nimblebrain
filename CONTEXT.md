@@ -255,10 +255,9 @@ install path; the person sees a skill or a connector. A plugin's servers are
 remote; one that names a `stdio` server is not installable. A workspace or a
 person owns a plugin (ADR-0069). Not plugins: a person's own authored skills and
 connectors added by URL, which are theirs, and system plugins, which share the
-format and reader but are bound by the operator. A mounted connector directory's
-own records still install as plain connectors until it becomes a path catalog.
+format and reader but are bound by the operator.
 
-### Catalog *(ADR-0077; the listing, Browse and install from it are built; `required` reconcile is not)*
+### Catalog *(ADR-0077; built)*
 `{source, policy, sha256?}` in the operator's configuration: `source` an AI
 Catalog listing URL or a mounted path, `policy` `required` or `available`
 (*Catalog policy*), `sha256` a pin of the listing, which a `required` catalog
@@ -269,7 +268,9 @@ artifacts. An entry selects what installs (its `url`, `digest` or inline
 `data`), so the catalog source is trusted for selection; what an install
 produces comes only from the artifact verified against that digest. That is why
 a `required` catalog must be pinned. Catalogs sit side by side, with no
-precedence between them.
+precedence between them. A path source reads a listing the operator mounts;
+it is how a deployment offers servers a public catalog cannot carry, each
+listed as a bare connector whose inline record carries its setup.
 
 ### Installed plugin record *(ADR-0077)*
 One per install per owner, beside the owner's connectors: `name@catalog`, the
@@ -323,7 +324,7 @@ serve the kernel. The server refuses a private tool to any principal but `host` 
 runtime itself), and the runtime never offers private tools to agents. The built-in
 conversations, tasks and files plugins are system plugins, run by default.
 
-### Catalog policy *(proposed, ADR-0076; not yet built)*
+### Catalog policy *(ADR-0076; built)*
 How far a catalog's items reach, set by the operator when attaching the catalog:
 `required` installs every item in it in every workspace, including workspaces created
 later, and a workspace cannot remove one; `available` offers them to install. Policy
@@ -331,7 +332,9 @@ decides presence, not authorization: a plugin that needs each person to sign in 
 asks each person. The kernel reconciles every workspace to its required plugins, so an
 item dropped from a `required` catalog, or the catalog itself, is uninstalled
 everywhere; an item dropped from an `available` catalog stays installed, shown as no
-longer offered (ADR-0077). A catalog cannot implement a kernel contract or make a plugin a system plugin.
+longer offered (ADR-0077). Required applies to workspaces: a person does not
+install a required item for themselves, and a workspace's record of one is
+marked required, so no person uninstalls it. A catalog cannot implement a kernel contract or make a plugin a system plugin.
 
 ### Contract *(ADR-0076)*
 The versioned, language-neutral interface between the kernel and whatever implements a

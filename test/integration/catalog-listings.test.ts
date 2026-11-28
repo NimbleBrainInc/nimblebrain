@@ -6,54 +6,28 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browseCatalog } from "../../src/catalogs/browse.ts";
 import type { CatalogConfig } from "../../src/config/catalogs.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { listingBytes, listingEntry } from "../helpers/ai-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
-const SERVERS = {
-  servers: [
-    {
-      name: "com.ahrefs/mcp",
-      description: "Ahrefs record",
-      version: "1.0.0",
-      remotes: [{ type: "streamable-http", url: "https://api.ahrefs.test/mcp" }],
-    },
-    {
-      name: "com.vendor/crm",
-      description: "Vendor CRM record",
-      version: "1.0.0",
-      remotes: [{ type: "streamable-http", url: "https://crm.vendor.test/mcp" }],
-    },
-  ],
-};
-
 let workDir: string;
 let server: ReturnType<typeof Bun.serve> | null = null;
 let requests: string[];
-let savedDir: string | undefined;
 
 beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "nb-catalog-listings-"));
-  const connectors = join(workDir, "connectors");
-  mkdirSync(connectors);
-  writeFileSync(join(connectors, "servers.json"), JSON.stringify(SERVERS));
-  savedDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = connectors;
   requests = [];
 });
 
 afterEach(async () => {
   await server?.stop(true);
   server = null;
-  if (savedDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedDir;
   rmSync(workDir, { recursive: true, force: true });
 });
 
@@ -106,7 +80,6 @@ describe("catalogs", () => {
     try {
       const { entries, errors } = await browseCatalog({
         listings: runtime.getCatalogListings(),
-        connectorCatalog: runtime.getConnectorCatalog(),
         brokers: runtime.getManagedConnectorRegistry(),
       });
       expect(errors).toEqual([]);

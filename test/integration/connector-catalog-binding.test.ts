@@ -16,7 +16,6 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { log } from "../../src/observability/log.ts";
@@ -24,6 +23,7 @@ import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import { defineInProcessApp } from "../../src/tools/in-process-app.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
@@ -82,15 +82,13 @@ function buildSource(wsId: string) {
 }
 
 let runtime: Runtime;
-let savedCatalogDir: string | undefined;
 
 beforeAll(async () => {
   mkdirSync(catalogDir, { recursive: true });
   writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-  savedCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
 
   runtime = await Runtime.start({
+    catalogs: connectorListCatalogs(catalogDir),
     identityProvider: devProvider,
     languageModel: createEchoModel(),
     logging: { disabled: true },
@@ -114,8 +112,6 @@ beforeAll(async () => {
 afterAll(async () => {
   stopAllToolSurfaceWatches();
   await runtime.shutdown();
-  if (savedCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedCatalogDir;
   rmSync(testDir, { recursive: true, force: true });
 });
 
