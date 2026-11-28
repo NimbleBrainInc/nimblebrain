@@ -39,6 +39,7 @@ import type { ChatRequest } from "../runtime/types.ts";
 import { coerceInputForSchema } from "../tools/coerce-input.ts";
 import { isPersonalConnectorName, personalConnectorServerName } from "../tools/identity-sources.ts";
 import { parseNamespacedSourceName } from "../tools/namespace.ts";
+import { preferenceDefaults } from "../tools/preferences.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ResourceData, ToolSource } from "../tools/types.ts";
 import { validateToolInput } from "../tools/validate-input.ts";
@@ -1232,6 +1233,7 @@ export async function handleBootstrap(
       displayName: identity.displayName,
       orgRole: identity.orgRole,
       preferences: identity.preferences,
+      preferenceDefaults: preferenceDefaults(runtime),
     },
     workspaces: userWorkspaces.map((ws) => ({
       id: ws.id,

@@ -41,7 +41,7 @@ App credentials are never collected in chat.
 
 - **nb__set_preferences** — Set the user's display name, timezone, locale, theme, or model.
   - When the user says "my name is X", "call me X", "set my name to X" → call `set_preferences({ displayName: "X" })`.
-  - When the user asks to change timezone, language, or theme → use the corresponding field.
+  - When the user asks to change timezone, language, or theme → use the corresponding field. When they ask to go back to the default for one → pass `null` for it (never `""`).
   - When the user asks to use a particular model for their chats → `set_preferences({ model: "provider:model-id" })`. It applies to conversations started after the change; the one you are in keeps the model it began on. Pass `null` to go back to the configured default.
   - This is for user-facing settings like name and formatting, not the agent's personality.
 

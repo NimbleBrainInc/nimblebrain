@@ -132,10 +132,8 @@ For update-style tools, the shape is:
 
 **Every update tool is a patch, and `null` clears.** Write a new update
 tool this way, and move an existing one onto it when you change its fields,
-under `src/platform/` or `src/tools/` (`set_model_config` is the reference).
-Not every tool follows it yet: `set_preferences` has no clear for its
-scalar fields, and its `model` field also takes `""`, because `get_config`
-reports an unset preference as `""` and a client writes back what it read.
+under `src/platform/` or `src/tools/` (`set_model_config` and
+`set_preferences` are the references).
 
 | Caller sends | Meaning |
 |---|---|

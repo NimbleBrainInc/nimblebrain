@@ -34,6 +34,7 @@
 
 ### Added
 
+- **A preference returns to the deployment's default.** Each one set on the profile (timezone, model, theme) shows a **Use default** clear, and `nb__set_preferences` takes `null` on `timezone`, `locale`, `theme` and `model` to clear it; `""` is refused. Bootstrap and `get_config` report `preferenceDefaults` beside the person's own values. [Docs](https://docs.nimblebrain.ai/guide/settings/).
 - **Browse is built from AI Catalog listings.** `catalogs` in `nimblebrain.json` names each listing (`{source, policy, sha256?}`, a URL or a mounted path), read live, cached, refreshed every 15 minutes, and shown side by side, each item addressed `name@catalog` with a status from its server's auth; a `required` catalog must be pinned. Default: NimbleBrain's catalog. [Docs](https://docs.nimblebrain.ai/config/connectors-catalog/#catalogs-what-browse-lists).
 - **Required catalogs are kept in every workspace.** Each item of a `required` catalog is installed into every workspace, a new one included, at startup, on workspace creation and every five minutes; nobody can uninstall one, and one its catalog drops (or the catalog itself) is uninstalled everywhere. [Docs](https://docs.nimblebrain.ai/config/connectors-catalog/#required-catalogs).
 - **The plugin list shows an item its catalog no longer offers.** It stays installed until someone removes it.

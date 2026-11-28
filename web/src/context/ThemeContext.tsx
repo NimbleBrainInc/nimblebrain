@@ -21,6 +21,11 @@ interface ThemeContextValue {
   setMode: (mode: ThemeMode) => void;
   /** Apply a server-side theme preference (light/dark/system). */
   applyPreference: (pref: ThemePreference) => void;
+  /**
+   * Drop the person's own theme, as when they clear their preference: the
+   * brand's `defaultTheme`, else the OS, applies again.
+   */
+  clearPreference: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -87,8 +92,9 @@ export function ThemeProvider({
   /**
    * Stores a theme the person chose outside Settings (the palette, the
    * shortcut) as their server preference. Absent while no one is signed in: a
-   * toggle on the sign-in page lives in this browser only, and the account's
-   * own preference, when it has one, applies once the shell loads.
+   * toggle on the sign-in page lives in this browser only. Once the shell has
+   * read the account's preferences, their theme applies, or the default when
+   * they have none.
    */
   savePreference?: (pref: ThemePreference) => Promise<void>;
 }) {
@@ -151,6 +157,17 @@ export function ThemeProvider({
     setModeState(resolved);
   }, []);
 
+  const clearPreference = useCallback(() => {
+    // As in `applyPreference`: a read taken before a toggle's save lands is
+    // older than the theme the person just chose.
+    if (pendingSaves.current > 0) return;
+    localStorage.removeItem(LS_KEY);
+    const resolved = resolvePreference(currentPreference());
+    modeRef.current = resolved;
+    applyMode(resolved);
+    setModeState(resolved);
+  }, []);
+
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -179,8 +196,8 @@ export function ThemeProvider({
   }, [toggle]);
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ mode, toggle, setMode, applyPreference }),
-    [mode, toggle, setMode, applyPreference],
+    () => ({ mode, toggle, setMode, applyPreference, clearPreference }),
+    [mode, toggle, setMode, applyPreference, clearPreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

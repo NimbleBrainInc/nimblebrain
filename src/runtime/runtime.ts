@@ -2226,6 +2226,11 @@ export class Runtime {
       onEstablished: () => this.maybeGenerateTitle(conversation, request, store),
     });
 
+    // The store records the turn's events as the engine emits them, without
+    // waiting. Settle them before answering, so a reload after the reply (or
+    // after a detached turn's `done`) reads the reply.
+    await store.flush();
+
     return {
       response: handle.output,
       conversationId: conversation.id,
@@ -6181,6 +6186,11 @@ export class Runtime {
       timezone: effectiveTimezone(preferences, this._operatorTimezone),
       locale: preferences?.locale ?? "en-US",
     };
+  }
+
+  /** The operator's default timezone for people's profiles: `NB_TIMEZONE`, else UTC. */
+  getOperatorTimezone(): string {
+    return this._operatorTimezone;
   }
 
   /** Invalidate cached identity for a user. Call after modifying user data (preferences, role). */

@@ -222,6 +222,33 @@ describe("saving a choice", () => {
     }
   });
 
+  // The stored choice is kept, and reported as the person's; what is in force
+  // is the default the turn runs on, as `getModelSlots` decides.
+  it("reports the default in force when policy narrowed past the stored choice", async () => {
+    const runtime = await start("save-narrowed", ["claude-sonnet-4-6"]);
+    try {
+      const userId = await seedUser(runtime);
+      await runtime.getUserStore().update(userId, { preferences: { models: { default: CHOSEN } } });
+      const identity: UserIdentity | null = await runtime.getUserStore().get(userId);
+      if (!identity) throw new Error(`user ${userId} not found`);
+      const tool = createCoreToolDefs(runtime).find((d) => d.name === "set_preferences");
+      if (!tool) throw new Error("set_preferences tool not found");
+      const res = await runWithRequestContext({ identity }, () =>
+        tool.handler({ locale: "de-DE" }),
+      );
+      expect(res.isError).toBeFalsy();
+      const out = res.structuredContent as {
+        preferences: { model?: string };
+        effective: { model: { value: string; source: string } };
+      };
+      expect(out.preferences.model).toBe(CHOSEN);
+      expect(out.effective.model).toEqual({ value: CONFIGURED_DEFAULT, source: "default" });
+      expect(slotsFor(runtime, CHOSEN).default).toBe(CONFIGURED_DEFAULT);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("clears the choice on null", async () => {
     const runtime = await start("save-clear", ["claude-sonnet-4-6", "claude-opus-4-6"]);
     try {
@@ -237,19 +264,18 @@ describe("saving a choice", () => {
 });
 
 describe("an empty model id is not a choice", () => {
-  // `get_config` reports an unset preference as `""`, so a client that reads
-  // preferences and writes them back sends `""`. Storing it would pin every
-  // conversation that user starts to a model that cannot answer, which they
-  // could not correct from chat because correcting it needs a turn.
-  it("clears rather than storing, round-tripping the unset sentinel", async () => {
-    const runtime = await start("empty-clears");
+  // `null` is the one spelling of a clear. An empty id is refused, naming it,
+  // rather than read as a second spelling or stored as a model nobody can run.
+  it("is refused, names null, and leaves the stored choice", async () => {
+    const runtime = await start("empty-refused");
     try {
       const userId = await seedUser(runtime);
       await setPreference(runtime, userId, CHOSEN);
       const res = await setPreference(runtime, userId, "");
-      expect(res.isError).toBeFalsy();
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain("null");
       const user = await runtime.getUserStore().get(userId);
-      expect(user?.preferences.models?.default).toBeUndefined();
+      expect(user?.preferences.models?.default).toBe(CHOSEN);
     } finally {
       await runtime.shutdown();
     }

@@ -106,9 +106,9 @@ export const tasksAuthoring: Scenario = {
   requires: ["scripted-model"],
   async run(t) {
     // The timezone is the person's, outside any workspace: put it back however
-    // the scenario ends, and prove it by reading it back. An unset one cannot
-    // be written back (the tool refuses ""), so that restore is reported.
-    const before = (await t.client.bootstrap(t.alice)).user.preferences?.timezone ?? "";
+    // the scenario ends, and prove it by reading it back. An unset one is put
+    // back by clearing it with null, so the deployment's default applies again.
+    const before = (await t.client.bootstrap(t.alice)).user.preferences?.timezone || null;
     try {
       const set = await t.client.tool(t.alice, t.ws, "nb__set_preferences", {
         timezone: TIMEZONE,
@@ -122,12 +122,18 @@ export const tasksAuthoring: Scenario = {
   },
 };
 
-/** Write `before` back as the timezone; why it is not back, or undefined when it is. */
-async function restoreTimezone(t: ScenarioContext, before: string): Promise<string | undefined> {
+/**
+ * Write `before` back as the timezone, clearing it when it was unset; why it is
+ * not back, or undefined when it is.
+ */
+async function restoreTimezone(
+  t: ScenarioContext,
+  before: string | null,
+): Promise<string | undefined> {
   try {
     const r = await t.client.tool(t.alice, t.ws, "nb__set_preferences", { timezone: before });
     if (r.isError) return `restore answered ${r.status}: ${textOf(r).slice(0, 200)}`;
-    const now = (await t.client.bootstrap(t.alice)).user.preferences?.timezone ?? "";
+    const now = (await t.client.bootstrap(t.alice)).user.preferences?.timezone || null;
     if (now !== before) return `reads ${JSON.stringify(now)}, wanted ${JSON.stringify(before)}`;
     return undefined;
   } catch (err) {

@@ -25,6 +25,16 @@ export interface UserPreferences {
         default?: string;
     };
 }
+/**
+ * Mirrors `PreferenceDefaults` (`src/platform/schemas/preferences.ts`): what
+ * each preference resolves to for a person who has not set it.
+ */
+export interface PreferenceDefaults {
+    timezone: string;
+    locale: string;
+    theme: "system" | "light" | "dark";
+    model: string;
+}
 /** Mirrors `ModelSlots` (`src/runtime/types.ts`). */
 export interface ModelSlots {
     default: string;
@@ -220,7 +230,10 @@ export interface BootstrapResponse {
         email: string;
         displayName: string;
         orgRole: OrgRole;
+        /** What the person has set; a preference they have not set is absent. */
         preferences: UserPreferences;
+        /** What each preference they have not set falls back to. */
+        preferenceDefaults: PreferenceDefaults;
     };
     /**
      * Every workspace the caller is a member of; never empty. Which one to open
