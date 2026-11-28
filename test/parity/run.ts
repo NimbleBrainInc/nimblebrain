@@ -78,6 +78,8 @@ async function run(): Promise<number> {
   }
   for (const why of report.leftBehind) console.log(`  LEFT BEHIND ${why}`);
   console.log(`report: ${out}`);
+  // A workspace left on a deployment fails every run, graded or not.
+  if (report.leftBehind.length > 0) return 1;
   if (!graded && env.PARITY_STRICT !== "1") return 0;
   return isClean(report) ? 0 : 1;
 }

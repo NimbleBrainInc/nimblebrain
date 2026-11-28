@@ -253,11 +253,23 @@ async function disposeWorkspace(
     await manage({ action: "delete", workspaceId: ws });
     const purged = await manage({ action: "purge", workspaceId: ws });
     if (!purged.isError) return undefined;
-    // A scenario that purged it already leaves nothing to purge.
-    const live = JSON.stringify(structured(await manage({ action: "list" })));
-    const deleted = JSON.stringify(structured(await manage({ action: "list_deleted" })));
-    if (!live.includes(ws) && !deleted.includes(ws)) return undefined;
-    return `${ws}: purge refused: ${textOf(purged).slice(0, 200)}`;
+    // A scenario that purged it already leaves nothing to purge, which only a
+    // successful listing of each kind can show; any other answer leaves it here.
+    const refused = `${ws}: purge refused: ${textOf(purged).slice(0, 200)}`;
+    for (const [action, key, idKey] of [
+      ["list", "workspaces", "id"],
+      ["list_deleted", "deleted", "workspaceId"],
+    ] as const) {
+      const r = await manage({ action });
+      const rows = structured<Record<string, unknown>>(r)[key];
+      if (r.isError || !Array.isArray(rows)) {
+        return `${refused}; ${action} answered ${r.status}: ${textOf(r).slice(0, 200)}`;
+      }
+      if (rows.some((row) => (row as Record<string, unknown> | null)?.[idKey] === ws)) {
+        return refused;
+      }
+    }
+    return undefined;
   } catch (err) {
     return `${ws}: ${err instanceof Error ? err.message : String(err)}`;
   }

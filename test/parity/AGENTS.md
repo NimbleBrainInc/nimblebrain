@@ -28,8 +28,9 @@ MCP only, so the same scenarios run against this tree, another checkout, or a de
   without `org-admin` every scenario is skipped with that reason. A scenario that creates a
   workspace calls `t.disposable(ws)` as soon as it exists, and the suite deletes and purges it
   when the scenario ends. A change to the person rather than a workspace (a preference) is put
-  back in the scenario's own `finally`. A workspace the run could not purge is listed in the
-  report's `leftBehind` and fails the run. In-process and tree runs use the first workspace of a
+  back in the scenario's own `finally`. A workspace is gone only when its purge succeeds or
+  successful listings (live and deleted) lack it; any other answer lists it in the report's
+  `leftBehind`, which fails the run, graded or not. In-process and tree runs use the first workspace of a
   throwaway work directory.
 - **Declare what a scenario needs** (`requires`): `scripted-model`, `second-identity`,
   `org-admin`, `fixture-catalog`. A target lacking one skips the scenario, and the report says
