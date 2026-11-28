@@ -1158,7 +1158,12 @@ export class Runtime {
     };
     const isToolEligibleForCurrentRequest = (tool: ToolSchema): boolean => {
       const ctx = getRequestContext();
-      return isToolEligibleForPromotion(tool, ctx?.identity?.orgRole, features);
+      return (
+        (!ctx?.isToolAllowed || ctx.isToolAllowed(tool.name)) &&
+        (!ctx?.unattended ||
+          (!isTaskForbiddenIdentityTool(tool.name) && !isTaskForbiddenSkillTool(tool.name))) &&
+        isToolEligibleForPromotion(tool, ctx?.identity?.orgRole, features)
+      );
     };
     const toolEligibilityCtx = { isToolEligible: isToolEligibleForCurrentRequest };
 

@@ -41,8 +41,17 @@ let runtime: Runtime;
 let source: McpSource;
 let handlerCalls = 0;
 
-/** One run's script: activate the hidden tool, call it, finish. */
+/** One run's script: search, activate the hidden tool, call it, finish. */
 const reachForTool = () => [
+  {
+    toolCalls: [
+      {
+        toolCallId: "call-search",
+        toolName: "nb__search",
+        input: JSON.stringify({ scope: "tools", query: "crm" }),
+      },
+    ],
+  },
   {
     toolCalls: [
       {
@@ -98,6 +107,9 @@ describe("an unattended run's allowedTools", () => {
     });
 
     expect(handlerCalls).toBe(0);
+    expect(result.toolCalls.find((c) => c.name === "nb__search")?.output).toContain(
+      'No tools matched "crm"',
+    );
     expect(result.toolCalls.find((c) => c.name === TOOL)?.ok).toBe(false);
   });
 
@@ -111,7 +123,32 @@ describe("an unattended run's allowedTools", () => {
     });
 
     expect(handlerCalls).toBe(1);
+    expect(result.toolCalls.find((c) => c.name === "nb__search")?.output).toContain(TOOL);
     expect(result.toolCalls.find((c) => c.name === TOOL)?.ok).toBe(true);
+  });
+
+  it("search hides durable authoring tools from unattended runs", async () => {
+    const nb = runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).getSource("nb");
+    if (!nb) throw new Error("nb source missing");
+    const browse = (unattended: boolean) =>
+      runWithRequestContext(
+        { identity: DEV_IDENTITY, workspaceId: TEST_WORKSPACE_ID, unattended },
+        () => nb.execute("search", { scope: "tools", query: "" }),
+      );
+    const names = (result: ToolResult) =>
+      (
+        (result.structuredContent as { tools: Array<{ name: string }> } | undefined)?.tools ?? []
+      ).map((tool) => tool.name);
+
+    const unattended = names(await browse(true));
+    expect(unattended).toContain("tasks__list");
+    expect(unattended).toContain("skills__list");
+    expect(unattended).not.toContain("tasks__create");
+    expect(unattended).not.toContain("skills__create");
+
+    const attended = names(await browse(false));
+    expect(attended).toContain("tasks__create");
+    expect(attended).toContain("skills__create");
   });
 });
 
