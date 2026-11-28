@@ -45,6 +45,8 @@ export async function readInstall(deps: Deps, home: string): Promise<InstallStat
   if (text === undefined) return undefined;
   try {
     const state = JSON.parse(text) as Partial<InstallState> | null;
+    // A CLI before 0.8.0 wrote the record only after a healthy first start, so a record with no phase is ready.
+    if (state && state.phase === undefined) state.phase = "ready";
     if (
       typeof state?.version !== "string" ||
       typeof state.port !== "number" ||
