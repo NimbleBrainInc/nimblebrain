@@ -1514,20 +1514,22 @@ export class ConnectorLifecycleManager {
   }
 
   /**
-   * Point an installed connection at a replaced pre-registered OAuth client
-   * (`oauthClient`) and make it sign in again.
+   * Point an installed connection at a ref whose credentials do not carry
+   * over (a replaced pre-registered OAuth client, or a new endpoint, client or
+   * scopes from a plugin update) and make it sign in again.
    *
-   * Tokens, the PKCE verifier, and any identity were minted for the previous
-   * client, which the vendor will not accept from the new one, so every OAuth
-   * record goes. Nothing is revoked upstream: revocation authenticates as the
-   * client that minted the tokens, and its secret has already been replaced.
-   * The connection lands in `not_authenticated`, so the next Connect runs
-   * `startAuth` with `ref`'s client.
+   * Tokens, the PKCE verifier, the DCR registration and any identity were
+   * minted for the previous settings, which the vendor will not accept under
+   * the new ones (and which must never be sent to another origin), so every
+   * OAuth record goes. Nothing is revoked upstream: revocation authenticates as
+   * the client that minted the tokens, which may already be replaced. The
+   * connection lands in `not_authenticated`, so the next Connect runs
+   * `startAuth` with `ref`.
    *
    * The caller persists `ref` to the workspace record; this updates the copy the
    * live instance reads. No-op when the connector is not installed here.
    */
-  async replaceOAuthClient(serverName: string, wsId: string, ref: ConnectorRef): Promise<void> {
+  async replaceConnectionRef(serverName: string, wsId: string, ref: ConnectorRef): Promise<void> {
     const instance = this.instances.get(`${serverName}|${wsId}`);
     if (!instance) return;
     instance.ref = { ...ref };

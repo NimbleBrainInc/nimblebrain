@@ -5,12 +5,23 @@ import { log } from "../observability/log.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
 import { TOMBSTONE_FILENAME } from "./context.ts";
 import { scaffoldWorkspace } from "./scaffold.ts";
+import { keyedChain } from "./serialize.ts";
 import type { Workspace, WorkspaceMember, WorkspaceRole } from "./types.ts";
 import { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
 
 // Re-export so `import { WORKSPACE_ID_RE } from ".../workspace-store.ts"`
 // call sites work; the pattern itself lives in `workspace-id-pattern.ts`.
 export { WORKSPACE_ID_RE } from "./workspace-id-pattern.ts";
+
+/**
+ * One get-then-write of a workspace record at a time, keyed by its file. Each
+ * mutator below re-reads the record and writes it whole, so two of them
+ * patching different fields would otherwise each persist the other's stale
+ * read. A caller that computes a field from its own earlier read (appending a
+ * connector, replacing a plugin record) holds `serializePerWorkspace` across
+ * that read too; this chain is inside it, so the two never wait on each other.
+ */
+const recordWrites = keyedChain();
 
 // ── Errors ─────────────────────────────────────────────────────────
 
@@ -330,6 +341,10 @@ export class WorkspaceStore {
       >
     >,
   ): Promise<Workspace | null> {
+    return recordWrites.run(this.wsPath(id), () => this.patch(id, patch));
+  }
+
+  private async patch(id: string, patch: Partial<Workspace>): Promise<Workspace | null> {
     const ws = await this.get(id);
     if (!ws) return null;
 
@@ -470,7 +485,15 @@ export class WorkspaceStore {
 
   // ── Member operations ──────────────────────────────────────────
 
-  async addMember(wsId: string, userId: string, role: WorkspaceRole): Promise<Workspace> {
+  addMember(wsId: string, userId: string, role: WorkspaceRole): Promise<Workspace> {
+    return recordWrites.run(this.wsPath(wsId), () => this.addMemberNow(wsId, userId, role));
+  }
+
+  private async addMemberNow(
+    wsId: string,
+    userId: string,
+    role: WorkspaceRole,
+  ): Promise<Workspace> {
     const ws = await this.get(wsId);
     if (!ws) throw new WorkspaceNotFoundError(wsId);
 
@@ -490,7 +513,11 @@ export class WorkspaceStore {
     return updated;
   }
 
-  async removeMember(wsId: string, userId: string): Promise<Workspace> {
+  removeMember(wsId: string, userId: string): Promise<Workspace> {
+    return recordWrites.run(this.wsPath(wsId), () => this.removeMemberNow(wsId, userId));
+  }
+
+  private async removeMemberNow(wsId: string, userId: string): Promise<Workspace> {
     const ws = await this.get(wsId);
     if (!ws) throw new WorkspaceNotFoundError(wsId);
 
@@ -509,7 +536,15 @@ export class WorkspaceStore {
     return updated;
   }
 
-  async updateMemberRole(wsId: string, userId: string, role: WorkspaceRole): Promise<Workspace> {
+  updateMemberRole(wsId: string, userId: string, role: WorkspaceRole): Promise<Workspace> {
+    return recordWrites.run(this.wsPath(wsId), () => this.updateMemberRoleNow(wsId, userId, role));
+  }
+
+  private async updateMemberRoleNow(
+    wsId: string,
+    userId: string,
+    role: WorkspaceRole,
+  ): Promise<Workspace> {
     const ws = await this.get(wsId);
     if (!ws) throw new WorkspaceNotFoundError(wsId);
 

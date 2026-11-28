@@ -6,14 +6,17 @@
  * It is stored beside the owner's connectors, under the same persistence:
  * `workspace.json#plugins` for a workspace (`WorkspaceStore`), and
  * `users/<id>/connectors.json#plugins` for a person (`IdentityConnectorStore`).
- * Both are read-modify-write with an atomic rename, and both keep install
- * order, which decides whose server record a shared connection reads.
+ * Both are read-modify-write with an atomic rename under the owner's record
+ * chain (`serializePerWorkspace`, `serializePerPerson`), the one every
+ * connector write to that file takes, and both keep install order, which
+ * decides whose server record a shared connection reads.
  */
 
 import type { CatalogOwner } from "../../connectors/catalog/binding.ts";
 import type { ServerDetail } from "../../connectors/catalog/server-detail.ts";
 import { slugifyServerName } from "../../connectors/runtime/paths.ts";
 import { IdentityConnectorStore } from "../../identity/connector-store.ts";
+import { serializePerWorkspace } from "../../workspace/serialize.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { ConversationStarter } from "../extension.ts";
 
@@ -94,9 +97,8 @@ export function createPluginRecordStore(deps: {
     list,
     get: async (owner, address) => (await list(owner)).find((r) => r.address === address) ?? null,
     put: async (owner, record) => {
-      if (owner.kind === "person") {
-        await identity.putPlugin(owner.userId, record);
-      } else {
+      if (owner.kind === "person") return identity.putPlugin(owner.userId, record);
+      await serializePerWorkspace(owner.wsId, async () => {
         const ws = await deps.workspaces.get(owner.wsId);
         if (!ws) throw new Error(`Workspace "${owner.wsId}" not found.`);
         const plugins = [...(ws.plugins ?? [])];
@@ -104,20 +106,17 @@ export function createPluginRecordStore(deps: {
         if (i >= 0) plugins[i] = record;
         else plugins.push(record);
         await deps.workspaces.update(owner.wsId, { plugins });
-      }
+      });
     },
     remove: async (owner, address) => {
-      let removed: boolean;
-      if (owner.kind === "person") {
-        removed = await identity.removePlugin(owner.userId, address);
-      } else {
-        const ws = await deps.workspaces.get(owner.wsId);
-        const plugins = ws?.plugins ?? [];
+      if (owner.kind === "person") return identity.removePlugin(owner.userId, address);
+      return serializePerWorkspace(owner.wsId, async () => {
+        const plugins = (await deps.workspaces.get(owner.wsId))?.plugins ?? [];
         const next = plugins.filter((p) => p.address !== address);
-        removed = next.length !== plugins.length;
-        if (removed) await deps.workspaces.update(owner.wsId, { plugins: next });
-      }
-      return removed;
+        if (next.length === plugins.length) return false;
+        await deps.workspaces.update(owner.wsId, { plugins: next });
+        return true;
+      });
     },
   };
 }

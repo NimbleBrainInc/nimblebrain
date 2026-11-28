@@ -17,6 +17,7 @@ import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
+import { McpOAuthRecords } from "../../src/tools/mcp-oauth-records.ts";
 import { listingBytes } from "../helpers/ai-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
@@ -371,7 +372,9 @@ describe("plugin install", () => {
     const again = await call({ action: "install", address: "notion@test" });
     expect(again.isError).toBe(false);
     const ws = await workspace(rt, wsId);
-    expect(ws.connectors.map((c) => c.serverName)).toEqual([NOTION_SERVER]);
+    expect(ws.connectors.map((c) => [c.serverName, c.installedBy])).toEqual([
+      [NOTION_SERVER, "notion@test"],
+    ]);
     expect(ws.plugins?.map((p) => p.address)).toEqual(["notion@test"]);
     // Served from the cache by digest: still one fetch.
     expect(artifactFetches()).toHaveLength(1);
@@ -504,5 +507,186 @@ describe("plugin install", () => {
     expect(
       await rt.getConnectorCatalog({ kind: "workspace", wsId: first }).catalogById(NOTION.name),
     ).toBeNull();
+  }, 30_000);
+  test("a connector added by hand at the plugin's own URL is refused, never adopted", async () => {
+    writeListing([publish("notion", notionPlugin())]);
+    const { rt, wsId, call } = await boot();
+    const own = {
+      url: NOTION.url,
+      serverName: NOTION_SERVER,
+      transport: { type: "streamable-http" as const },
+      oauthScope: "workspace" as const,
+    };
+    await rt.getWorkspaceStore().update(wsId, { connectors: [own] });
+    const refused = await call({ action: "install", address: "notion@test" });
+    expect(refused.structuredContent).toMatchObject({ error: "SERVER_CONFLICT" });
+    const ws = await workspace(rt, wsId);
+    expect(ws.connectors).toEqual([own]);
+    expect(ws.plugins ?? []).toEqual([]);
+
+    // A person's own connector is theirs the same way.
+    const store = new IdentityConnectorStore({ workDir: rt.getWorkDir() });
+    const { oauthScope: _scope, ...personal } = own;
+    await store.add(ADMIN.id, personal);
+    const mine = await call({ action: "install", address: "notion@test", scope: "identity" });
+    expect(mine.structuredContent).toMatchObject({ error: "SERVER_CONFLICT" });
+    expect(await store.list(ADMIN.id)).toEqual([personal]);
+    expect(await store.listPlugins(ADMIN.id)).toEqual([]);
+
+    // A connection another plugin's unfinished install left is not taken either.
+    await rt
+      .getWorkspaceStore()
+      .update(wsId, { connectors: [{ ...own, installedBy: "other@test" }] });
+    const left = await call({ action: "install", address: "notion@test" });
+    expect(left.structuredContent).toMatchObject({ error: "SERVER_CONFLICT" });
+  }, 30_000);
+
+  test("overlapping installs and uninstalls for one owner keep every record", async () => {
+    writeListing([
+      publish("notion", notionPlugin()),
+      publish("wiki", pluginZip({ name: "wiki", servers: { docs: NOTION } })),
+      bareConnectorEntry("linear", LINEAR),
+      publish("notes", new TextEncoder().encode(skillMd("notes")), {
+        type: "application/agent-skills+md",
+      }),
+    ]);
+    const { rt, wsId, call } = await boot();
+    const both = await Promise.all([
+      call({ action: "install", address: "notion@test" }),
+      call({ action: "install", address: "linear@test" }),
+    ]);
+    expect(both.map((r) => r.isError)).toEqual([false, false]);
+    let ws = await workspace(rt, wsId);
+    expect(ws.plugins?.map((p) => p.address).sort()).toEqual(["linear@test", "notion@test"]);
+    expect(ws.connectors.map((c) => c.serverName).sort()).toEqual(
+      [LINEAR_SERVER, NOTION_SERVER].sort(),
+    );
+
+    await Promise.all([
+      call({ action: "uninstall", address: "notion@test" }),
+      call({ action: "install", address: "notes@test" }),
+    ]);
+    ws = await workspace(rt, wsId);
+    expect(ws.plugins?.map((p) => p.address).sort()).toEqual(["linear@test", "notes@test"]);
+    expect(ws.connectors.map((c) => c.serverName)).toEqual([LINEAR_SERVER]);
+
+    // Two uninstalls of the plugins sharing a connection: each decides on the
+    // other's outcome, so the last one removes it.
+    await call({ action: "install", address: "notion@test" });
+    await call({ action: "install", address: "wiki@test" });
+    await Promise.all([
+      call({ action: "uninstall", address: "notion@test" }),
+      call({ action: "uninstall", address: "wiki@test" }),
+    ]);
+    ws = await workspace(rt, wsId);
+    expect(ws.connectors.map((c) => c.serverName)).toEqual([LINEAR_SERVER]);
+
+    // The same for a person, whose records share connectors.json with their connectors.
+    const store = new IdentityConnectorStore({ workDir: rt.getWorkDir() });
+    await Promise.all([
+      call({ action: "install", address: "notion@test", scope: "identity" }),
+      call({ action: "install", address: "linear@test", scope: "identity" }),
+    ]);
+    expect((await store.listPlugins(ADMIN.id)).map((p) => p.address).sort()).toEqual([
+      "linear@test",
+      "notion@test",
+    ]);
+    await Promise.all([
+      call({ action: "uninstall", address: "notion@test", scope: "identity" }),
+      call({ action: "install", address: "notes@test", scope: "identity" }),
+    ]);
+    expect((await store.listPlugins(ADMIN.id)).map((p) => p.address).sort()).toEqual([
+      "linear@test",
+      "notes@test",
+    ]);
+    expect((await store.list(ADMIN.id)).map((c) => c.serverName)).toEqual([LINEAR_SERVER]);
+  }, 30_000);
+
+  test("an update that moves its server's URL moves the connection, signs it out, and survives a restart", async () => {
+    writeListing([publish("notion", notionPlugin())]);
+    const { rt, wsId, call } = await boot();
+    await call({ action: "install", address: "notion@test" });
+    await call({ action: "install", address: "notion@test", scope: "identity" });
+    const workspaceTokens = new McpOAuthRecords({
+      owner: { type: "workspace", wsId },
+      serverName: NOTION_SERVER,
+    });
+    const personTokens = new McpOAuthRecords({
+      owner: { type: "user", userId: ADMIN.id },
+      serverName: NOTION_SERVER,
+    });
+    await workspaceTokens.write("tokens", { access_token: "old-origin" });
+    await personTokens.write("tokens", { access_token: "old-origin" });
+
+    const moved = "https://mcp.notion-next.test/mcp";
+    const next = pluginZip({ name: "notion", servers: { notion: { ...NOTION, url: moved } } });
+    writeListing([publish("notion", next)]);
+    await rt.getCatalogListings().refresh();
+
+    const updated = await call({ action: "update_plugin", address: "notion@test" });
+    expect(updated.structuredContent).toMatchObject({
+      updated: true,
+      reconnectedConnectors: [NOTION_SERVER],
+    });
+    const ws = await workspace(rt, wsId);
+    expect(ws.connectors.map((c) => [c.url, c.installedBy])).toEqual([[moved, "notion@test"]]);
+    expect(rt.getLifecycle().getInstance(NOTION_SERVER, wsId)?.ref?.url).toBe(moved);
+    expect(await workspaceTokens.has("tokens")).toBe(false);
+
+    const mine = await call({ action: "update_plugin", address: "notion@test", scope: "identity" });
+    expect(mine.structuredContent).toMatchObject({ reconnectedConnectors: [NOTION_SERVER] });
+    const store = new IdentityConnectorStore({ workDir: rt.getWorkDir() });
+    expect((await store.list(ADMIN.id)).map((c) => c.url)).toEqual([moved]);
+    expect(await personTokens.has("tokens")).toBe(false);
+
+    // An update with nothing to move reconnects nothing.
+    const plain = pluginZip({
+      name: "notion",
+      servers: { notion: { ...NOTION, url: moved } },
+      skills: { more: skillMd("more") },
+    });
+    writeListing([publish("notion", plain)]);
+    await rt.getCatalogListings().refresh();
+    const again = await call({ action: "update_plugin", address: "notion@test" });
+    expect(again.structuredContent).toMatchObject({ updated: true, reconnectedConnectors: [] });
+
+    // After a restart the connection reads the moved URL, bound to the plugin's record.
+    await rt.shutdown();
+    runtime = null;
+    const restarted = await Runtime.start({
+      identityProvider: devProvider,
+      languageModel: createEchoModel(),
+      logging: { disabled: true },
+      workDir,
+      catalogs: [{ source: listingPath, policy: "available", name: "test" }],
+    });
+    runtime = restarted;
+    await restarted.ensureWorkspaceRegistry(wsId);
+    expect(restarted.getLifecycle().getInstance(NOTION_SERVER, wsId)?.ref?.url).toBe(moved);
+    const own = { kind: "workspace" as const, wsId };
+    expect((await restarted.getConnectorCatalog(own).catalogByUrl()).get(moved)?.id).toBe(
+      NOTION.name,
+    );
+  }, 30_000);
+
+  test("an update of a plugin that shares a server another plugin supplies leaves the connection", async () => {
+    const wiki = (url: string) =>
+      pluginZip({ name: "wiki", servers: { docs: { ...NOTION, url } } });
+    writeListing([
+      publish("notion", pluginZip({ name: "notion", servers: { notion: NOTION } })),
+      publish("wiki", wiki(NOTION.url)),
+    ]);
+    const { rt, wsId, call } = await boot();
+    await call({ action: "install", address: "notion@test" });
+    await call({ action: "install", address: "wiki@test" });
+
+    writeListing([
+      publish("notion", pluginZip({ name: "notion", servers: { notion: NOTION } })),
+      publish("wiki", wiki("https://mcp.notion-next.test/mcp")),
+    ]);
+    await rt.getCatalogListings().refresh();
+    const updated = await call({ action: "update_plugin", address: "wiki@test" });
+    expect(updated.structuredContent).toMatchObject({ updated: true, reconnectedConnectors: [] });
+    expect((await workspace(rt, wsId)).connectors.map((c) => c.url)).toEqual([NOTION.url]);
   }, 30_000);
 });

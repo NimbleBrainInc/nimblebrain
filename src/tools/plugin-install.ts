@@ -11,16 +11,26 @@
  * 3. its manifest, validated, a `stdio` server refused (`readArtifact`);
  * 4. each server's record from the artifact, connected through the connector
  *    install path that exists for every catalog install (`ConnectorOps.connect`:
- *    the OAuth, DCR, static-client and broker flows unchanged). A server this
- *    owner already has connected is reused, never connected twice;
+ *    the OAuth, DCR, static-client and broker flows unchanged), the connection
+ *    marked with the plugin's address (`ConnectorRef.installedBy`). A server
+ *    this owner already has connected by a plugin is reused, never connected
+ *    twice;
  * 5. its skills, materialized as managed skills;
  * 6. its conversation starters, kept on the record;
  * 7. the record, written last.
  *
  * **Crash-safe by idempotence.** Every step before the record converges when
- * run again: a connected server is reused, a skill's file is rewritten in
- * place. So an install that stops between steps leaves no record, and
- * installing again finishes it and writes the record; nothing is half-owned.
+ * run again: a connection the plugin created is reused, a skill's file is
+ * rewritten in place. So an install that stops between steps leaves no record,
+ * and installing again finishes it and writes the record; nothing is
+ * half-owned.
+ *
+ * **One lifecycle operation per owner at a time.** Install, uninstall and
+ * update each read the owner's records to decide what to connect, keep or
+ * remove, so two overlapping ones would decide on a stale read; they run in
+ * turn per owner (`oneAtATime`). Each record and connector write also holds
+ * the owner's record chain (`src/workspace/serialize.ts`), shared with every
+ * other writer of that file.
  *
  * **Uninstall** removes exactly what the record lists: each connection no
  * other plugin of the owner names, and the managed skills. A connection
@@ -30,10 +40,16 @@
  *
  * **Update** is an admin's act when the listing's digest differs from the
  * record's: the new artifact is fetched and verified, what the plugin owns is
- * replaced, and the record is rewritten. Nothing updates on its own.
+ * replaced, and the record is rewritten. Nothing updates on its own. A
+ * connection whose server record this plugin supplies follows the new record:
+ * when its endpoint, auth client or scopes change, the connection is rewritten
+ * and signs in again, since its credentials belong to the old settings. A
+ * connection another plugin supplies is left as that plugin's record says.
  *
- * A connector its owner added by URL is never a plugin: it gets no record, and
- * a plugin whose server would land on it is refused rather than adopting it.
+ * A connector its owner added is never a plugin's: it carries no
+ * `installedBy`, gets no record, and a plugin whose server would land on it is
+ * refused rather than adopting it, even at the same URL. Uninstall never
+ * removes one.
  */
 
 import { createHash } from "node:crypto";
@@ -41,7 +57,6 @@ import { join } from "node:path";
 import type { ListedEntry } from "../catalogs/listing.ts";
 import { projectServerDetailToCatalogListing } from "../connectors/catalog/projection.ts";
 import type { CatalogListing } from "../connectors/catalog/types.ts";
-import { brokeredRef } from "../connectors/runtime/brokered.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
 import type { ToolResult } from "../engine/types.ts";
@@ -64,6 +79,7 @@ import {
   materializeManagedSkill,
   removeManagedSkill,
 } from "../skills/managed-skills.ts";
+import { keyedChain } from "../workspace/serialize.ts";
 
 /** What plugin install needs from the connector install path, for one owner. */
 export interface ConnectorOps {
@@ -71,8 +87,17 @@ export interface ConnectorOps {
   admit(owner: PluginOwner): Promise<ToolResult | null>;
   /** The owner's connection named `serverName`, when it has one. */
   existing(owner: PluginOwner, serverName: string): Promise<ConnectorRef | null>;
-  /** Connect one server from its record's projection; `alreadyInstalled` when it was connected. */
-  connect(owner: PluginOwner, listing: CatalogListing): Promise<ToolResult>;
+  /**
+   * Connect one server from its record's projection, marking a new connection
+   * `installedBy`; `alreadyInstalled` when it was connected. With
+   * `reconfigure`, an existing connection is moved to the projection's
+   * connection settings (`reconnected` when it was).
+   */
+  connect(
+    owner: PluginOwner,
+    listing: CatalogListing,
+    opts: { installedBy: string; reconfigure: boolean },
+  ): Promise<ToolResult>;
   /** Remove one connection, as the connector's own uninstall does. */
   disconnect(owner: PluginOwner, serverName: string): Promise<ToolResult>;
 }
@@ -128,25 +153,29 @@ async function fetchContents(
 }
 
 /**
- * A server the owner has connected that this plugin may not take: one no
- * record of the owner names and that is not the same server (its URL, or a
- * broker's connector id, differs). That is a connector the owner added
- * themselves, and adopting it would let an uninstall remove what they made.
+ * Why this plugin may not use the owner's connection for `listing`'s server,
+ * or null when it may: there is none, it is one a plugin created and an
+ * installed plugin names (a shared server), or this plugin created it (an
+ * install that stopped before its record). A connection no plugin created is
+ * the owner's own, whatever its URL, and adopting it would let an uninstall
+ * remove what they made.
  */
 async function conflict(
   ctx: PluginInstallContext,
   owner: PluginOwner,
+  address: string,
   records: InstalledPluginRecord[],
   listing: CatalogListing,
 ): Promise<string | null> {
   const serverName = connectionOf({ name: listing.id });
   const existing = await ctx.ops.existing(owner, serverName);
   if (!existing) return null;
+  if (!existing.installedBy) {
+    return `a connector named "${serverName}" was added here by hand (at ${existing.url}), and a plugin never takes over a connector it did not create; remove it first to install this plugin's server`;
+  }
+  if (existing.installedBy === address) return null;
   if (records.some((r) => r.connectors.some((c) => connectionOf(c) === serverName))) return null;
-  const sameUrl = listing.install.kind === "remote-oauth" && existing.url === listing.install.url;
-  const sameBroker = brokeredRef(existing)?.connectorId === listing.id;
-  if (sameUrl || sameBroker) return null;
-  return `a connector named "${serverName}" is already installed here and no plugin installed it (it is at ${existing.url}); remove it first to install this plugin's server`;
+  return `a connector named "${serverName}" was left by an unfinished install of ${existing.installedBy}; install that plugin again, or remove the connector first`;
 }
 
 /** Connect every server of `contents`; the first refusal stops the install. */
@@ -156,35 +185,52 @@ async function connectAll(
   address: string,
   contents: PluginContents,
   records: InstalledPluginRecord[],
-): Promise<
-  | { connected: Array<{ serverName: string; alreadyInstalled: boolean; warning?: string }> }
-  | ToolResult
-> {
-  const listings: CatalogListing[] = [];
+  reconfigure: (name: string) => boolean = () => false,
+): Promise<{ connected: Connected[] } | ToolResult> {
+  const listings: Array<{ listing: CatalogListing; name: string }> = [];
   for (const server of contents.servers) {
     const listing = projectServerDetailToCatalogListing(server.detail);
     if (!listing)
       return err("INVALID", `${address}: its server "${server.key}" is not installable`);
-    const why = await conflict(ctx, owner, records, listing);
+    const why = await conflict(ctx, owner, address, records, listing);
     if (why) return err("SERVER_CONFLICT", `${address} cannot be installed: ${why}.`);
-    listings.push(listing);
+    listings.push({ listing, name: server.name });
   }
   const pending = contents.servers.map((s) => ({ address, detail: s.detail }));
   return ctx.runtime.withPendingServerRecords(owner, pending, async () => {
-    const connected: Array<{ serverName: string; alreadyInstalled: boolean; warning?: string }> =
-      [];
-    for (const listing of listings) {
-      const result = await ctx.ops.connect(owner, listing);
+    const connected: Connected[] = [];
+    for (const { listing, name } of listings) {
+      const result = await ctx.ops.connect(owner, listing, {
+        installedBy: address,
+        reconfigure: reconfigure(name),
+      });
       if (result.isError) return result;
       const sc = (result.structuredContent ?? {}) as Record<string, unknown>;
       connected.push({
         serverName: String(sc.serverName ?? connectionOf({ name: listing.id })),
         alreadyInstalled: sc.alreadyInstalled === true,
+        reconnected: sc.reconnected === true,
         ...(typeof sc.warning === "string" ? { warning: sc.warning } : {}),
       });
     }
     return { connected };
   });
+}
+
+interface Connected {
+  serverName: string;
+  alreadyInstalled: boolean;
+  /** An update moved it to new connection settings; it signs in again. */
+  reconnected: boolean;
+  warning?: string;
+}
+
+const lifecycles = keyedChain();
+
+/** Run one install, uninstall or update of `owner`'s plugins at a time. */
+function oneAtATime<T>(owner: PluginOwner, task: () => Promise<T>): Promise<T> {
+  const key = owner.kind === "workspace" ? `workspace:${owner.wsId}` : `person:${owner.userId}`;
+  return lifecycles.run(key, task);
 }
 
 /** Materialize `contents`' skills as managed skills of `owner`. */
@@ -261,7 +307,15 @@ function recordOf(
 }
 
 /** Install the item at `address` for `owner`. */
-export async function installPlugin(
+export function installPlugin(
+  ctx: PluginInstallContext,
+  owner: PluginOwner,
+  address: string,
+): Promise<ToolResult> {
+  return oneAtATime(owner, () => installPluginNow(ctx, owner, address));
+}
+
+async function installPluginNow(
   ctx: PluginInstallContext,
   owner: PluginOwner,
   address: string,
@@ -357,7 +411,8 @@ async function releaseConnections(
       kept.push(serverName);
       continue;
     }
-    if (!(await ctx.ops.existing(owner, serverName))) continue;
+    // A connection no plugin created is its owner's, whatever record names it.
+    if (!(await ctx.ops.existing(owner, serverName))?.installedBy) continue;
     const result = await ctx.ops.disconnect(owner, serverName);
     if (result.isError) return result;
     removed.push(serverName);
@@ -366,7 +421,15 @@ async function releaseConnections(
 }
 
 /** Uninstall the plugin at `address` from `owner`. */
-export async function uninstallPlugin(
+export function uninstallPlugin(
+  ctx: PluginInstallContext,
+  owner: PluginOwner,
+  address: string,
+): Promise<ToolResult> {
+  return oneAtATime(owner, () => uninstallPluginNow(ctx, owner, address));
+}
+
+async function uninstallPluginNow(
   ctx: PluginInstallContext,
   owner: PluginOwner,
   address: string,
@@ -408,7 +471,15 @@ export async function uninstallPlugin(
 }
 
 /** Update the plugin at `address` for `owner` to what its catalog lists now. */
-export async function updatePlugin(
+export function updatePlugin(
+  ctx: PluginInstallContext,
+  owner: PluginOwner,
+  address: string,
+): Promise<ToolResult> {
+  return oneAtATime(owner, () => updatePluginNow(ctx, owner, address));
+}
+
+async function updatePluginNow(
   ctx: PluginInstallContext,
   owner: PluginOwner,
   address: string,
@@ -445,7 +516,13 @@ export async function updatePlugin(
   const { contents, digest } = fetched;
   const others = records.filter((r) => r !== record);
 
-  const connected = await connectAll(ctx, owner, address, contents, records);
+  // A server's record is its first supplier's in install order: this plugin
+  // moves a connection only where that is itself (or nobody yet).
+  const suppliesIt = (name: string) => {
+    const supplier = records.find((r) => r.connectors.some((c) => c.name === name));
+    return !supplier || supplier === record;
+  };
+  const connected = await connectAll(ctx, owner, address, contents, records, suppliesIt);
   if ("isError" in connected) return connected;
   const dropped = record.connectors
     .map((c) => c.name)
@@ -459,7 +536,7 @@ export async function updatePlugin(
     recordOf(entry, digest, contents, skills, record.installedAt, new Date().toISOString()),
   );
   return {
-    content: textContent(`Updated ${address} to ${digest}.`),
+    content: textContent(`Updated ${address} to ${digest}.${reconnectedNote(connected.connected)}`),
     structuredContent: {
       ok: true,
       address,
@@ -467,10 +544,20 @@ export async function updatePlugin(
       from: record.digest,
       digest,
       removedConnectors: released.removed,
+      reconnectedConnectors: connected.connected
+        .filter((c) => c.reconnected)
+        .map((c) => c.serverName),
       serverNames: connected.connected.map((c) => c.serverName),
       skills: skills.map((s) => s.name),
       ...ownerFields(owner),
     },
     isError: false,
   };
+}
+
+function reconnectedNote(connected: Connected[]): string {
+  const moved = connected.filter((c) => c.reconnected).map((c) => c.serverName);
+  return moved.length > 0
+    ? ` ${moved.join(", ")} now connect with updated settings; connect again to sign in.`
+    : "";
 }

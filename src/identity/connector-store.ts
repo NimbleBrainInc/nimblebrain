@@ -4,6 +4,7 @@ import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import type { InstalledPluginRecord } from "../plugins/installed/record.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
+import { serializePerPerson } from "../workspace/serialize.ts";
 import { IdentityContext } from "./context.ts";
 
 /**
@@ -28,9 +29,9 @@ import { IdentityContext } from "./context.ts";
  * because the ref came from `connectors.json`, not from any workspace.
  *
  * Storage discipline mirrors `WorkspaceStore`: read-modify-write with an
- * atomic (`rename(2)`) commit via `writeJsonAtomic`. No file lock — like
- * `workspace.json`, concurrent writes to one user's record are rare (a user
- * clicking install), and a lost update is re-suppliable on retry.
+ * atomic (`rename(2)`) commit via `writeJsonAtomic`. Every write holds the
+ * person's chain (`serializePerPerson`) across its read, so a connector write
+ * and a plugin-record write to one record never lose each other.
  */
 
 const RECORD_VERSION = 1 as const;
@@ -88,22 +89,26 @@ export class IdentityConnectorStore {
    * Write one plugin's record: replace the record of the same address in place
    * (an update keeps its install order), else append it.
    */
-  async putPlugin(userId: string, record: InstalledPluginRecord): Promise<void> {
-    const current = await this.#read(userId);
-    const i = current.plugins.findIndex((p) => p.address === record.address);
-    const plugins = [...current.plugins];
-    if (i >= 0) plugins[i] = record;
-    else plugins.push(record);
-    await this.#write(userId, current.connectors, plugins);
+  putPlugin(userId: string, record: InstalledPluginRecord): Promise<void> {
+    return serializePerPerson(userId, async () => {
+      const current = await this.#read(userId);
+      const i = current.plugins.findIndex((p) => p.address === record.address);
+      const plugins = [...current.plugins];
+      if (i >= 0) plugins[i] = record;
+      else plugins.push(record);
+      await this.#write(userId, current.connectors, plugins);
+    });
   }
 
   /** Remove one plugin's record. Returns whether one was there. */
-  async removePlugin(userId: string, address: string): Promise<boolean> {
-    const current = await this.#read(userId);
-    const plugins = current.plugins.filter((p) => p.address !== address);
-    if (plugins.length === current.plugins.length) return false;
-    await this.#write(userId, current.connectors, plugins);
-    return true;
+  removePlugin(userId: string, address: string): Promise<boolean> {
+    return serializePerPerson(userId, async () => {
+      const current = await this.#read(userId);
+      const plugins = current.plugins.filter((p) => p.address !== address);
+      if (plugins.length === current.plugins.length) return false;
+      await this.#write(userId, current.connectors, plugins);
+      return true;
+    });
   }
 
   /**
@@ -146,13 +151,15 @@ export class IdentityConnectorStore {
    * rely on; a re-install therefore updates in place (and moves the entry to
    * the end). Returns the new list.
    */
-  async add(userId: string, ref: ConnectorRef): Promise<ConnectorRef[]> {
+  add(userId: string, ref: ConnectorRef): Promise<ConnectorRef[]> {
     const serverName = serverNameFromRef(ref);
-    const { connectors: current, plugins } = await this.#read(userId);
-    const next = current.filter((r) => serverNameFromRef(r) !== serverName);
-    next.push(ref);
-    await this.#write(userId, next, plugins);
-    return next;
+    return serializePerPerson(userId, async () => {
+      const { connectors: current, plugins } = await this.#read(userId);
+      const next = current.filter((r) => serverNameFromRef(r) !== serverName);
+      next.push(ref);
+      await this.#write(userId, next, plugins);
+      return next;
+    });
   }
 
   /**
@@ -160,12 +167,14 @@ export class IdentityConnectorStore {
    * was removed, `false` if no such connector existed (idempotent
    * uninstall — a no-op is not an error).
    */
-  async remove(userId: string, serverName: string): Promise<boolean> {
-    const { connectors: current, plugins } = await this.#read(userId);
-    const next = current.filter((r) => serverNameFromRef(r) !== serverName);
-    if (next.length === current.length) return false;
-    await this.#write(userId, next, plugins);
-    return true;
+  remove(userId: string, serverName: string): Promise<boolean> {
+    return serializePerPerson(userId, async () => {
+      const { connectors: current, plugins } = await this.#read(userId);
+      const next = current.filter((r) => serverNameFromRef(r) !== serverName);
+      if (next.length === current.length) return false;
+      await this.#write(userId, next, plugins);
+      return true;
+    });
   }
 
   async #write(

@@ -61,10 +61,25 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   about an installed connection (display, placements, hooks, admin tools, notifications, broker
   config, minted transport, in-band auth) names the connection's owner; a read with no owner
   is the connector list alone. Never build one owner's view from another's records.
-- **The record is written last; every step before it is idempotent.** A connected server is
-  reused and a skill file rewritten in place, so a stopped install finishes on the next one.
-  Uninstall removes what the record lists (a connection another record names stays), then the
-  record. Never adopt a connection no record names at another URL: it is the owner's.
+- **The record is written last; every step before it is idempotent.** A connection the plugin
+  created is reused and a skill file rewritten in place, so a stopped install finishes on the
+  next one. Uninstall removes what the record lists (a connection another record names stays),
+  then the record.
+- **A connection a plugin creates carries `installedBy` (its address); one without it is the
+  owner's.** Install reuses a connection only when it carries `installedBy` and either this
+  plugin made it or an installed record names it; anything else is refused, whatever its URL.
+  Uninstall never removes a connection without it. Never infer provenance from a URL.
+- **One install, uninstall or update per owner at a time** (`oneAtATime` in
+  `src/tools/plugin-install.ts`), since each decides from the owner's records. Every write to
+  `workspace.json` or `users/<id>/connectors.json` that computes a field from its own read holds
+  the owner's record chain (`serializePerWorkspace`, `serializePerPerson` in
+  `src/workspace/serialize.ts`), and `WorkspaceStore`'s own mutators hold an inner one, so a
+  connector, record, hook or member write never loses another.
+- **Update moves only the connections this plugin supplies** (it is the first record naming the
+  server). When the new record changes the endpoint, transport, scopes, authorization params or
+  OAuth client, the ref is rewritten in place and the connection's OAuth records go: it signs in
+  again (`reconnectedConnectors`). A brokered connection is left alone (its endpoint is the
+  broker's session). A connection another plugin supplies is not changed.
 - **A plugin's skills are managed** (`src/skills/managed-skills.ts`): a bound one in the owner's
   `connector-skills/<serverName>/`, any other in `plugin-skills/<address>/`, each marked by
   provenance `plugin:<address>:<skill>`. The skill tools refuse to write any file in either
