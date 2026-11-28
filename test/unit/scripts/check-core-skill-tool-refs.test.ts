@@ -50,6 +50,25 @@ describe("check-core-skill-tool-refs — contract extraction", () => {
 });
 
 describe("check-core-skill-tool-refs — prompt validation", () => {
+  test("accepts platform app ids without hiding misspelled tools in shipped guides", () => {
+    const result = validateCoreSkill(
+      "src/skills/builtin/authoring-guide.md",
+      "The `nb__skills` app exposes `skills__list`; do not call `skills__lits`.",
+      [...CONTRACTS, { source: "skills", name: "list", scopes: [] }],
+    );
+
+    expect(result.references).toEqual(["skills__list", "skills__lits"]);
+    expect(result.violations).toEqual([
+      {
+        file: "src/skills/builtin/authoring-guide.md",
+        line: 1,
+        token: "skills__lits",
+        owner: "skills",
+        accepted: ["list"],
+      },
+    ]);
+  });
+
   test("accepts declared tools and the owning tool's scope values", () => {
     const result = validateCoreSkill(
       "src/skills/core/bootstrap.md",
@@ -188,7 +207,7 @@ describe("check-core-skill-tool-refs — prompt validation", () => {
 });
 
 describe("check-core-skill-tool-refs — script self-invocation", () => {
-  test("the current core skills resolve against current static contracts", async () => {
+  test("the current core and builtin skills resolve against current static contracts", async () => {
     const proc = Bun.spawn({
       cmd: ["bun", "run", "--no-env-file", "scripts/check-core-skill-tool-refs.ts"],
       stdout: "pipe",
@@ -202,7 +221,7 @@ describe("check-core-skill-tool-refs — script self-invocation", () => {
     ]);
     expect(exitCode).toBe(0);
     expect(stdout).toMatch(
-      /^✓ \d+ distinct tool\/scope references validated across \d+ core skills\n$/,
+      /^✓ \d+ distinct tool\/scope references validated across 5 shipped skills\n$/,
     );
     expect(stderr).toBe("");
   });
