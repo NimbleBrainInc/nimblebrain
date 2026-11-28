@@ -8,7 +8,7 @@
 - **A file's `$id` is its served URL, stated in the file.** Nothing derives it from another name.
 - **Runtime code that validates against a published schema reads it from here**, never from a copy elsewhere in the repo.
 - **Legacy `/v1/<name>` keys are served as aliases by the deploy.** Configs and manifests written before this layout point at them, so the workflow's `LEGACY_ALIASES` copies each one from its file here. Never remove an alias.
-- **A new top-level directory needs the deploy role granted write on its prefix** (an infra change outside this repo) before it merges, or its upload is refused.
+- **This tree is the only publisher of schemas.nimblebrain.ai.** The deploy role may write any key in its bucket, so a new top-level directory needs no change outside this repo.
 
 | File | What it is | Source |
 |---|---|---|
