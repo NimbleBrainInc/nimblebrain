@@ -23,6 +23,7 @@ import {
 import { MAX_RUN_INPUT_BYTES, runInputProblem, schemaProblem } from "./json-schema.ts";
 import type { Batch, DefinitionFields, RunRecord, Schedule, TaskDef } from "./model.ts";
 import {
+  activeRunOf,
   allTasks,
   blobNames,
   clearDisableState,
@@ -128,6 +129,22 @@ function checkAllowedTools(tool: string, allowedTools: unknown): void {
   if (unrunnable.length > 0) throw invalidInput(tool, unrunnableProblem(unrunnable));
 }
 
+/**
+ * Refuse a once at or before the latest `now` the host gave (`hostNow`): the host's clock
+ * has passed it, so it could only be recorded missed. A time after that instant is judged
+ * on the next `due`, which runs it within its grace (CONTRACT.md §6).
+ */
+function checkOnceAhead(tx: Tx, tool: string, schedule: Schedule | undefined): void {
+  const seen = tx.ws.state.hostNow;
+  if (!schedule || !("at" in schedule) || seen === undefined) return;
+  if (Date.parse(schedule.at) > Date.parse(seen)) return;
+  throw invalidInput(
+    tool,
+    `the one-time schedule's at (${schedule.at}) has already passed by the host's clock ` +
+      `(${seen}). Give a later time, or use run to run it now.`,
+  );
+}
+
 /** Refuse a definition the schema cannot judge: an unplaceable schedule, a schema that does not compile, an empty prompt with no skills. */
 function checkDefinition(
   tool: string,
@@ -195,6 +212,7 @@ export function create(tx: Tx, caller: Caller, args: Checked) {
   });
   checkAllowedTools("create", task.allowedTools);
   checkDefinition("create", task);
+  checkOnceAhead(tx, "create", task.schedule);
   if (findTask(tx.ws.state, caller.ownerId, id)) {
     throw publicError(
       "task_exists",
@@ -234,6 +252,7 @@ export function update(tx: Tx, caller: Caller, args: Checked) {
     updated = true;
   }
   checkDefinition("update", task);
+  if (manifest.schedule) checkOnceAhead(tx, "update", task.schedule);
   if ("schedule" in manifest) rescheduled(task, manifest, before.retired);
   if (manifest.enabled !== undefined) setEnabled(task, manifest.enabled === true);
   if (JSON.stringify(task.tokenBudget) !== before.budget)
@@ -433,6 +452,14 @@ export function run(tx: Tx, caller: Caller, args: Checked) {
     if (existing.taskId !== task.id)
       throw conflict("idempotencyKey already asked for a run of another task.");
     return { runId: existing.runId, taskId: task.id, existing: true };
+  }
+  const active = activeRunOf(tx.ws.state, task.uid);
+  if (active) {
+    const where = active.status === "running" ? "running" : "queued";
+    throw conflict(
+      `"${task.id}" already has a run ${where} (${active.id}). Follow it with run_result, ` +
+        "or cancel it to ask for a new one.",
+    );
   }
   const record: RunRecord = {
     id: newRunId(),

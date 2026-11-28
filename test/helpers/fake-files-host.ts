@@ -9,6 +9,7 @@
 import type { FilesHost, OwnerScope, Resolved } from "../../src/files/host.ts";
 import type { TransferClient } from "../../src/files/transfer.ts";
 import type { FileRecord } from "../../src/files/types.ts";
+import { ContractToolError } from "../../src/plugins/bound-servers.ts";
 
 interface Stored {
   record: FileRecord;
@@ -121,7 +122,7 @@ export function createFakeFilesHost(): FakeFilesHost {
     async completeUpload(scope, uploadId) {
       calls.push({ tool: "complete_upload", scope });
       const open = uploads.get(uploadId);
-      if (!open?.body) throw Object.assign(new Error("incomplete"), { code: "upload_incomplete" });
+      if (!open?.body) throw new ContractToolError("upload_incomplete", "incomplete");
       const args = open.args as { filename: string; mimeType: string; source: string };
       const record = seed(open.scope, {
         filename: args.filename,
@@ -148,7 +149,7 @@ export function createFakeFilesHost(): FakeFilesHost {
     async read(scope, id, maxBytes) {
       calls.push({ tool: "read", scope, args: { id, maxBytes } });
       const f = visible(scope, id);
-      if (!f) throw Object.assign(new Error("absent"), { code: "file_not_found" });
+      if (!f) throw new ContractToolError("file_not_found", "absent");
       const text = texts.get(id);
       return {
         id,

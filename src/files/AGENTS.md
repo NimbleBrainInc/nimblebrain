@@ -25,19 +25,26 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
 
 - **Every door takes files in through it**: a chat turn's attachments, the REST upload
   (`POST /v1/workspaces/:wsId/resources`), which the app bridge's uploads use too.
+- **The per-file limit is one value**: `files.maxFileSize` is passed to the bound server as
+  `NB_FILES_MAX_FILE_BYTES` (`filesServerEnv`, `contract.ts`) when it starts, so the intake and
+  `begin_upload` never disagree. Never give the plugin a limit of its own in `mcp.json`.
 - **Check before opening any upload**: count, each size, the total, the allowlist
   (`mime.ts`, held to the contract document by `test/unit/contracts/contract-documents.test.ts`).
   A part with no type is sent as `application/octet-stream`; the plugin records a text type
   from the extension.
 - **Then begin, stream, complete.** `begin_upload` as `host` walled to the workspace and the
   uploader, with the turn's `conversationId` in the scope; the body streamed to the upload URL;
-  `complete_upload`. A chat turn with no conversation yet mints its id first
+  `complete_upload`. A step the plugin refused (a `ContractToolError`) is a 400; one that did not
+  reach it (not running, restarting, a transfer cut off) is `IntakeError.unavailable`, answered
+  503 `files_unavailable` so the caller sends the file again. A chat turn with no conversation yet mints its id first
   (`ChatRequest.newConversationId`), so every record names it. The REST door is per file; a
   chat turn is all or none, deleting (as `host`) what it completed when a later step fails.
 - **Never hold a body in memory.** A multipart request is read as it arrives
   (`multipart.ts`): each file part is spooled to `<workDir>/tmp/intake/` and measured, since
   `begin_upload` needs the exact size and every check precedes every upload. The spool is
-  removed when the request ends, whatever the outcome.
+  removed when the request ends, whatever the outcome, and swept whole at boot
+  (`sweepIntakeSpool`, after the work directory's lock is held) of what a process that stopped
+  mid-request left.
 - **Announce the kernel's writes** (`runtime.announceFilesChange`), as the plugin's own tools
   are announced, so the owner's Files screen refreshes.
 
@@ -63,7 +70,8 @@ code implements. The built-in implementation is `packages/files/` (`packages/fil
 - **Every door serves through `resolve`** as `host` with the caller's own workspace and owner;
   absent and another owner's file answer alike.
   - The browser download, `GET /v1/workspaces/:wsId/files/:fileId` (`file-serve.ts`): the
-    host's own headers (allowlisted `Content-Type` else octet-stream, `nosniff`,
+    host's own headers (the record's `Content-Type`, parameters kept, when its bare type is
+    allowlisted and it is tokens throughout, else octet-stream; `nosniff`,
     `FILE_BYTES_CSP`, a sanitised RFC 6266 `Content-Disposition`), one `Range` passed through.
     `FILE_BYTES_CSP` is always sent: an operator can clear `NB_CSP`, and a stored HTML or SVG
     file must never run script on the shell's origin.

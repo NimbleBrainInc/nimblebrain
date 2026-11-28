@@ -152,6 +152,32 @@ describe("spend accounts — reservations", () => {
     expect(hold.check(call(0, 8_000))).toEqual({ maxOutputTokens: 8_000 });
   });
 
+  it("a refusal reads reserved only when other runs' reservations held what the balance would pay", () => {
+    const balances = createSpendBalances();
+    const account = { id: "in", unit: "input_tokens" as const, remaining: 10_000 };
+    const a = balances.open([account], PRICED);
+    const b = balances.open([account], PRICED);
+    expect(a.check(call(6_000, 1_000))).toEqual({ maxOutputTokens: 1_000 });
+    // 6,000 fits the balance; a's reservation held it.
+    expect(b.check(call(6_000, 1_000))).toEqual({ accountId: "in" });
+    expect(b.stopOf("in")).toBe("reserved");
+    // 12,000 fits no balance, whatever anyone reserves.
+    expect(b.check(call(12_000, 1_000))).toEqual({ accountId: "in" });
+    expect(b.stopOf("in")).toBe("exhausted");
+  });
+
+  it("runs sharing a balance too small for one call each read exhausted, never reserved", () => {
+    const balances = createSpendBalances();
+    // $0.0001 cannot pay for a 1,000-token prompt at $2/M.
+    const account = { id: "batch", unit: "usd" as const, remaining: 0.0001, sharedBy: 2 };
+    const a = balances.open([account], PRICED);
+    const b = balances.open([account], PRICED);
+    expect(a.check(call(1_000, 8_000))).toEqual({ accountId: "batch" });
+    expect(b.check(call(1_000, 8_000))).toEqual({ accountId: "batch" });
+    expect(a.stopOf("batch")).toBe("exhausted");
+    expect(b.stopOf("batch")).toBe("exhausted");
+  });
+
   it("actual input past the projection is debited in full, taking the balance below zero by the excess", () => {
     const balances = createSpendBalances();
     const account = { id: "in", unit: "input_tokens" as const, remaining: 1_000 };
@@ -230,7 +256,18 @@ describe("spend accounts — a run reserved as a whole (ADR-0063)", () => {
     expect(balances.open([account], PRICED).reserveRun().tokens).toBe(15_000);
     expect(balances.open([account], PRICED).reserveRun().tokens).toBe(15_000);
     // A third run past the declared sharing finds nothing left unreserved.
-    expect(balances.open([account], PRICED).reserveRun().tokens).toBe(0);
+    const third = balances.open([account], PRICED);
+    expect(third.reserveRun().tokens).toBe(0);
+    // Its share was cut by the others' reservations; theirs was their part.
+    expect(third.stopOf("in")).toBe("reserved");
+  });
+
+  it("a whole-run share that is its full part reads exhausted when spent", () => {
+    const balances = createSpendBalances();
+    const account = { id: "in", unit: "input_tokens" as const, remaining: 30_000, sharedBy: 2 };
+    const hold = balances.open([account], PRICED);
+    hold.reserveRun();
+    expect(hold.stopOf("in")).toBe("exhausted");
   });
 
   it("prices a dollar share at the dearest per-token rate, and grants none unpriced", () => {

@@ -60,13 +60,14 @@ describe("POST /v1/workspaces/:wsId/resources", () => {
     const entry = body.files[0];
     expect(entry.id).toMatch(/^fl_[0-9a-f]{24}$/);
     expect(entry.filename).toBe("hello.txt");
-    // Browsers may append parameters like `;charset=utf-8`; we keep the
-    // raw Content-Type as-given so we don't lie about the upload.
-    expect(entry.mimeType.split(";")[0]).toBe("text/plain");
+    // The record keeps the type as sent, parameters and all (CONTRACT.md §5).
+    expect(entry.mimeType).toBe("text/plain;charset=utf-8");
     expect(entry.size).toBe(11);
 
-    // The files plugin holds the body; the workspace in the request path serves it.
+    // The files plugin holds the body; the workspace in the request path serves it,
+    // under the recorded type: the allowlist is judged on the bare type.
     const served = await fetch(`${baseUrl}/v1/workspaces/${TEST_WORKSPACE_ID}/files/${entry.id}`);
+    expect(served.headers.get("content-type")).toBe("text/plain;charset=utf-8");
     expect(await served.text()).toBe("hello world");
   });
 

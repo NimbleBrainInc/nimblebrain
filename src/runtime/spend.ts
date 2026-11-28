@@ -76,6 +76,14 @@ export interface SpendHold extends SpendGate {
    */
   reserveRun(): { tokens: number; accountId?: string };
   /**
+   * Why this run's accounts stopped it at `accountId`: `reserved` when other
+   * runs' reservations held what the run needed and the balance alone would
+   * have paid (a call `check` refused, or a share `reserveRun` cut below its
+   * part of the balance), else `exhausted`. Decided when the refusal happens,
+   * since what other runs reserve changes as they run and end.
+   */
+  stopOf(accountId: string): "exhausted" | "reserved";
+  /**
    * Stop holding the accounts, releasing any outstanding reservation. The last
    * run to release an id discards its balance. Idempotent.
    */
@@ -188,6 +196,16 @@ function tokensFor(unit: SpendUnit, amount: number, rates: WorstRates): number {
   }
 }
 
+/**
+ * Whether the account's balance, without the reservations of other runs' calls, pays for
+ * the call's input and `floor` output: a refusal it would not have made is theirs.
+ */
+function paysAlone(entry: Live, inputTokens: number, floor: number, rates: WorstRates): boolean {
+  if (entry.reserved <= 0) return false;
+  const alone = outputAllowance(entry.unit, entry.balance, inputTokens, rates);
+  return alone !== null && alone >= floor;
+}
+
 interface Live {
   unit: SpendUnit;
   balance: number;
@@ -226,6 +244,8 @@ export function createSpendBalances(): SpendBalances {
       // each debit and returned at release.
       const runReservation = new Map<string, number>();
       const sharedBy = new Map<string, number>();
+      // Accounts whose refusal (a call's, or a cut share) other runs' reservations caused.
+      const reservedOut = new Set<string>();
       for (const account of accounts) {
         if (account.sharedBy !== undefined && account.sharedBy >= 1) {
           sharedBy.set(account.id, Math.max(sharedBy.get(account.id) ?? 1, account.sharedBy));
@@ -252,9 +272,12 @@ export function createSpendBalances(): SpendBalances {
               call.inputTokens,
               rates,
             );
-            if (allowance === null) return { accountId: id };
+            if (allowance === null || Math.min(allowed, allowance) < floor) {
+              if (paysAlone(entry, call.inputTokens, floor, rates)) reservedOut.add(id);
+              else reservedOut.delete(id);
+              return { accountId: id };
+            }
             allowed = Math.min(allowed, allowance);
-            if (allowed < floor) return { accountId: id };
           }
           for (const id of ids) {
             const entry = live.get(id)!;
@@ -271,10 +294,9 @@ export function createSpendBalances(): SpendBalances {
             const entry = live.get(id)!;
             // Each of the runs that may share the account gets the same share
             // of its balance, never more than is not already reserved.
-            const share = Math.max(
-              0,
-              Math.min(entry.balance / (sharedBy.get(id) ?? 1), entry.balance - entry.reserved),
-            );
+            const part = entry.balance / (sharedBy.get(id) ?? 1);
+            const share = Math.max(0, Math.min(part, entry.balance - entry.reserved));
+            if (share < part) reservedOut.add(id);
             entry.reserved += share;
             runReservation.set(id, (runReservation.get(id) ?? 0) + share);
             const tokens = tokensFor(entry.unit, share, rates);
@@ -299,6 +321,7 @@ export function createSpendBalances(): SpendBalances {
             }
           }
         },
+        stopOf: (accountId) => (reservedOut.has(accountId) ? "reserved" : "exhausted"),
         release() {
           if (released) return;
           released = true;

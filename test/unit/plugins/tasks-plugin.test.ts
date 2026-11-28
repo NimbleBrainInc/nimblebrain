@@ -358,11 +358,35 @@ describe("schedules", () => {
     const ran = (await ok("status", { taskId: "once" })).task;
     expect([ran.enabled, ran.onceDone.outcome]).toEqual([false, "ran"]);
 
-    await ok("create", { manifest: { name: "Late", schedule: { at: iso(T0) } }, body: "p" });
-    expect((await due(T0 + 2 * HOUR)).occurrences.map((o: { ref: string }) => o.ref)).toEqual([]);
+    // Ahead of the host's latest now when saved; the host is down until long past it.
+    await ok("create", {
+      manifest: { name: "Late", schedule: { at: iso(T0 + 2 * HOUR) } },
+      body: "p",
+    });
+    expect((await due(T0 + 4 * HOUR)).occurrences.map((o: { ref: string }) => o.ref)).toEqual([]);
     const late = await ok("status", { taskId: "late" });
     expect(late.task.onceDone.outcome).toBe("missed");
     expect(late.recentRuns[0].execution).toBe("skipped");
+  });
+
+  test("a once at or before the host's latest now is refused at create and update", async () => {
+    await due(T0 + HOUR);
+    const past = await call("create", {
+      manifest: { name: "Gone", schedule: { at: iso(T0) } },
+      body: "p",
+    });
+    expect(JSON.parse(past.content[0]?.text ?? "{}").code).toBe("invalid_input");
+    await ok("create", {
+      manifest: { name: "Soon", schedule: { at: iso(T0 + 2 * HOUR) } },
+      body: "p",
+    });
+    const moved = await call("update", {
+      taskId: "soon",
+      manifest: { schedule: { at: iso(T0 + HOUR) } },
+    });
+    expect(JSON.parse(moved.content[0]?.text ?? "{}").code).toBe("invalid_input");
+    // A task saved before keeps changing in other ways.
+    await ok("update", { taskId: "soon", manifest: { description: "d" } });
   });
 
   test("schedule checks need no clock", () => {
@@ -376,6 +400,54 @@ describe("schedules", () => {
     expect(matchesNameGlob("domain.dns.ready", "domain.*")).toBe(false);
     expect(matchesNameGlob("domain.dns.ready", "domain.**")).toBe(true);
     expect(matchesNameGlob("x".repeat(200), "*a*a*a*a*a")).toBe(false);
+  });
+});
+
+describe("an interrupted run", () => {
+  test("closed by a later claim, keeps the start its begin_run recorded", async () => {
+    await ok("create", { manifest: { name: "Crashy" }, body: "p" });
+    const { runId } = await ok("run", { taskId: "crashy" });
+    const begun = await begin(`r:${runId}`, T0);
+    // A restart: the next claim reports it interrupted, and the host closes it later.
+    const skip = await begin(`r:${runId}`, T0 + MIN);
+    expect(skip.interrupted).toEqual({ runId, token: begun.__token ?? token - 2 });
+    const closedAt = T0 + 2 * MIN;
+    await end(
+      { runId, __token: skip.interrupted.token },
+      outcome(closedAt, {
+        output: "",
+        stopReason: "error",
+        error: { code: "interrupted", transient: true },
+      }),
+    );
+    const { run } = await ok("run_result", { runId });
+    expect(run.startedAt).toBe(iso(T0));
+    expect(run.completedAt).toBe(iso(closedAt + MIN));
+  });
+});
+
+describe("one run per task", () => {
+  test("run refuses a task with a run queued or running, naming it, and asks for nothing", async () => {
+    await ok("create", { manifest: { name: "Solo" }, body: "p" });
+    const { runId } = await ok("run", { taskId: "solo" });
+    const queued = await call("run", { taskId: "solo" });
+    expect(queued.isError).toBe(true);
+    expect(JSON.parse(queued.content[0]?.text ?? "{}")).toMatchObject({ code: "conflict" });
+    expect(queued.content[0]?.text).toContain(runId);
+    expect((await due(T0)).occurrences).toHaveLength(1);
+    const begun = await begin(`r:${runId}`, T0);
+    expect((await call("run", { taskId: "solo" })).content[0]?.text).toContain("running");
+    await end(begun, outcome(T0));
+    expect((await ok("run", { taskId: "solo" })).runId).not.toBe(runId);
+  });
+
+  test("a scheduled run in flight refuses run too", async () => {
+    await ok("create", { manifest: { name: "Ticker", schedule: { intervalMs: HOUR } }, body: "p" });
+    const occ = (await due(T0)).occurrences[0];
+    await begin(occ.ref, T0);
+    expect(
+      JSON.parse((await call("run", { taskId: "ticker" })).content[0]?.text ?? "{}").code,
+    ).toBe("conflict");
   });
 });
 
@@ -473,6 +545,19 @@ describe("a batch's budget stops", () => {
       "budget",
       3,
     ]);
+  });
+
+  test("a budget too small for one call pauses the batch once, asking for no run again", async () => {
+    const batchId = await startBatch(4, 2, 0.0001);
+    const [a, b] = await beginAll(T0);
+    // The door reads both exhausted: no reservation held what either needed.
+    const first = await end(a, spend(T0, `task-batch:${batchId}`, "exhausted", 0, 0));
+    await end(b, spend(T0, `task-batch:${batchId}`, "exhausted", 0, 0));
+    expect(first.notices[0].id).toMatch(/^batch-paused:/);
+    expect((await due(T0)).occurrences).toEqual([]);
+    const page = await ok("batch", { batchId, results: true });
+    expect([page.batch.state, page.batch.pause.reason]).toEqual(["paused", "budget"]);
+    expect(page.results.every((r: Answer) => (r.previousRunIds ?? []).length <= 1)).toBe(true);
   });
 
   test("a reserved stop puts the item back and waits for another run of the batch to end", async () => {

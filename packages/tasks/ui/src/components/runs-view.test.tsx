@@ -19,7 +19,6 @@ const BATCH: TaskBatch = {
     running: 0,
     pass: 85,
     fail: 15,
-    uncertain: 0,
     not_assessed: 0,
     failed: 0,
     skipped: 0,

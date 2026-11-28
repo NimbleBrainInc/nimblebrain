@@ -72,7 +72,7 @@ export const CONTRACT = {
         code: "conflict",
         prefix: "Conflict: ",
         meaning:
-          "The call contradicts what is stored: an idempotencyKey repeated with another definition, a batch action its state refuses, a budget at or below what is spent. Nothing was written.",
+          "The call contradicts what is stored: an idempotencyKey repeated with another definition, a run of a task that already has one running or queued, a batch action its state refuses, a budget at or below what is spent. Nothing was written.",
       },
       {
         code: "grant_missing",

@@ -15,6 +15,7 @@ import {
   takeInFile,
   takeInTurn,
 } from "../../../src/files/intake.ts";
+import { ContractToolError } from "../../../src/plugins/bound-servers.ts";
 import { createFakeFilesHost } from "../../helpers/fake-files-host.ts";
 
 const SCOPE = {
@@ -82,6 +83,30 @@ describe("takeInFile", () => {
     expect((err as Error).message).toContain('"a.txt"');
     expect((err as Error).message).not.toContain("secret");
   });
+
+  test("the plugin not reached is unavailable, which a door answers as retryable", async () => {
+    const files = createFakeFilesHost();
+    files.beginUpload = async () => {
+      throw Object.assign(new Error("Connection closed"), { code: "CONNECTION_CLOSED" });
+    };
+    const err = await takeInFile(files, SCOPE, body("a.txt", "x"), { source: "app" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(IntakeError);
+    expect((err as IntakeError).unavailable).toBe(true);
+  });
+
+  test("the plugin's refusal is not unavailable", async () => {
+    const files = createFakeFilesHost();
+    files.beginUpload = async () => {
+      throw new ContractToolError("too_large", "too large");
+    };
+    const err = await takeInFile(files, SCOPE, body("a.txt", "x"), { source: "app" }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as IntakeError).unavailable).toBe(false);
+    expect((err as IntakeError).message).toContain("larger than the files plugin accepts");
+  });
 });
 
 describe("takeInTurn", () => {
@@ -116,7 +141,7 @@ describe("takeInTurn", () => {
     const complete = files.completeUpload;
     let n = 0;
     files.completeUpload = async (scope, id) => {
-      if (++n === 2) throw Object.assign(new Error("x"), { code: "upload_incomplete" });
+      if (++n === 2) throw new ContractToolError("upload_incomplete", "x");
       return complete(scope, id);
     };
     await expect(

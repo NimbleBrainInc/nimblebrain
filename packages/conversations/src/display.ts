@@ -225,6 +225,19 @@ export function extractText(content: unknown): string {
     .join("");
 }
 
+/**
+ * The text a person wrote in a user message: its text parts, less those the host marked
+ * `attached` (an attachment's extracted text or a note naming it, which the model reads and
+ * the message shows as its `files`).
+ */
+export function personText(content: unknown): string {
+  return partsOf(content)
+    .map((p) =>
+      p.type === "text" && p.attached !== true && typeof p.text === "string" ? p.text : "",
+    )
+    .join("");
+}
+
 // ── Metrics derived from events ────────────────────────────────────────────
 
 export interface DerivedMetrics {
@@ -258,7 +271,7 @@ export function accumulateEventMetrics(evt: ReadEvent, acc: DerivedMetrics): voi
 // ── Reconstruction ─────────────────────────────────────────────────────────
 
 function buildUserMessage(evt: UserMessageEvent): DisplayMessage {
-  const text = extractText(evt.content);
+  const text = personText(evt.content);
   return {
     role: "user",
     content: text,
@@ -497,13 +510,31 @@ function sumRunUsage(llmResponses: LlmResponseEvent[]): DisplayUsage {
   };
 }
 
+/**
+ * A run that produced no model response: shown only once it is known to have ended without
+ * completing (its terminator says why, or a later turn cut it off), as an assistant message
+ * with no text that carries the reason. A run still open, or one that completed with
+ * nothing to say, shows nothing.
+ */
+function unansweredRun(scan: RunScan): DisplayMessage | null {
+  const ended = scan.abandoned || scan.terminated;
+  if (!ended || !scan.stopReason || scan.stopReason === "complete") return null;
+  return {
+    role: "assistant",
+    content: "",
+    blocks: [],
+    timestamp: scan.endTs,
+    stopReason: scan.stopReason,
+  };
+}
+
 function collectRun(
   events: ReadEvent[],
   start: number,
   runId: string,
 ): [DisplayMessage | null, number] {
   const scan = scanRun(events, start, runId);
-  if (scan.llmResponses.length === 0) return [null, scan.nextIndex];
+  if (scan.llmResponses.length === 0) return [unansweredRun(scan), scan.nextIndex];
   const { blocks, toolCalls } = buildRunBlocks(scan);
   const content = blocks
     .filter((b): b is { type: "text"; text: string } => b.type === "text")

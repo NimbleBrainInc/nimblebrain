@@ -84,7 +84,6 @@ test("a run that ages out of the window leaves the figures with no data change",
       runs: 1,
       pass: 0,
       fail: 1,
-      uncertain: 0,
       passRate: 0,
       costUsd: 0.4,
       lastRun: { id: "run_1", startedAt: new Date().toISOString(), label: "Poor result" },
@@ -112,7 +111,7 @@ test("a run that ages out of the window leaves the figures with no data change",
   expect(calls.runs).toBeUndefined();
 
   // The run is now older than the window: the tool no longer counts it.
-  statsAnswer = [{ taskId: "digest", runs: 0, pass: 0, fail: 0, uncertain: 0, costUsd: 0 }];
+  statsAnswer = [{ taskId: "digest", runs: 0, pass: 0, fail: 0, costUsd: 0 }];
   await act(async () => {
     jest.advanceTimersByTime(home.STATS_REFRESH_MS - 1);
   });

@@ -53,6 +53,13 @@ conversations. How to run it standalone is in `README.md`.
   conversation's turn, so that conversation reads `active: true` and its trailing run
   `pending`; every other reads `false` and an unterminated trailing run reads `interrupted`.
   The host overlays every `list` row's `active` on the results it relays.
+- **A run with no model response shows only once it ended without completing** (its
+  terminator's stop reason, or `interrupted` when a later turn cut it off): an assistant
+  message with no text that carries the reason. A trailing open one shows nothing, since
+  only the host knows whether it is still running.
+- **A user message shows the person's own text.** Text parts the host marked `attached`
+  (an attachment's text, for the model) are left out of its content, the `list` preview and
+  `search`; its `files` carry the attachments.
 
 ## Storage
 

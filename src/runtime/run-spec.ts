@@ -35,8 +35,14 @@ import type { RequestContext } from "./request-context.ts";
 import type { SpendAccount } from "./spend.ts";
 import type { AppContext, ChatResult, TurnUsage } from "./types.ts";
 
-/** A user-message text content block. */
-export type UserTextPart = { type: "text"; text: string };
+/**
+ * A user-message text content block. `attached` marks text the host added for
+ * an attachment (its extracted text, or a note naming it), which the model
+ * reads and the person does not: a conversation's display shows the person's
+ * own text and the attachment as a chip. The model boundary
+ * (`rehydrateUserResources`) sends only `type` and `text`.
+ */
+export type UserTextPart = { type: "text"; text: string; attached?: true };
 
 /** A user-message MCP `resource_link` attachment block. */
 export type UserResourceLinkPart = {
@@ -268,6 +274,12 @@ export interface RunHandle {
    * held the cap and refused the run's next call; absent when the engine did.
    */
   spendAccountId?: string;
+  /**
+   * With a stop by one of the run's own spend accounts: `reserved` when other
+   * runs' reservations held what the run needed and the balance alone would
+   * have paid, else `exhausted` (`SpendHold.stopOf`).
+   */
+  spendStop?: "exhausted" | "reserved";
   /** See `EngineResult.wrapUpLimit`. */
   wrapUpLimit?: WrapUpLimit;
   usage: TurnUsage;

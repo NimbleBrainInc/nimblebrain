@@ -2177,6 +2177,14 @@ export class McpSource implements ToolSource {
       }
       return this.cachedTools;
     }
+    // A restart clears the memo before it connects again. A read in that window
+    // waits for the connection the restart is making instead of answering that
+    // the source is not started, as a tool call waits for it. A first start is
+    // not waited for: a remote one can park on an interactive sign-in.
+    if (this.restartInFlight && !this.client?.getServerCapabilities()) {
+      await this.restartInFlight.catch(() => false);
+      if (this.cachedTools) return this.cachedTools;
+    }
     const fetched = await this.fetchToolList();
     this.cachedTools = fetched;
     this.toolsFetchedAt = Date.now();

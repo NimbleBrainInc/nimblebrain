@@ -27,14 +27,13 @@ function BatchProgress({ batch }: { batch: TaskBatch }) {
   const c = batch.counts;
   const passed = c.pass + c.not_assessed;
   const failed = c.fail + c.failed;
-  const other = c.uncertain + c.skipped + c.cancelled;
+  const other = c.skipped + c.cancelled;
   const items = batch.items ?? Object.values(c).reduce((a, b) => a + b, 0);
   const pct = (n: number) => `${(n / Math.max(1, items)) * 100}%`;
   const parts = [
     `${items} item${items === 1 ? "" : "s"}`,
     passed ? `${passed} passed` : "",
     failed ? `${failed} failed` : "",
-    c.uncertain ? `${c.uncertain} to review` : "",
     batch.state === "running" && batch.done !== undefined ? `${batch.done} done` : "",
     batch.state === "paused" ? "paused" : "",
     batch.state === "cancelled" ? "cancelled" : "",

@@ -23,6 +23,9 @@ import { apiError } from "./types.ts";
  */
 export const FILE_BYTES_CSP = `sandbox; ${DEFAULT_CSP}`;
 
+/** An RFC 9110 token: what a media type's names and its parameters' names and values are made of. */
+const TOKEN = "[a-z0-9!#$%&'*+.^_`|~-]+";
+
 /**
  * A `Content-Disposition` for `filename` that no name can break or inject into:
  * an ASCII fallback with control characters, quotes, backslashes and path
@@ -39,11 +42,22 @@ export function contentDisposition(filename: string): string {
   return `inline; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
-/** The type a body is served under: the record's when it is on the allowlist, else octet-stream. */
+/** A type and subtype, each a token, then any `; name=value` parameters of tokens. */
+const HEADER_SAFE_TYPE = new RegExp(
+  `^${TOKEN}/${TOKEN}(?:[ \\t]*;[ \\t]*${TOKEN}=${TOKEN})*$`,
+  "i",
+);
+
+/**
+ * The type a body is served under: the record's when its bare type is on the
+ * allowlist (CONTRACT.md §5 compares types without parameters), else
+ * octet-stream. A record keeps its parameters (`text/plain;charset=utf-8`),
+ * and they are served with it; the type crosses into a header only when it is
+ * tokens throughout.
+ */
 export function servedType(mimeType: string): string {
-  // The record's type crosses into a header only when it is a plain token pair.
-  const plain = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(mimeType.trim());
-  return plain && isAllowedType(mimeType) ? mimeType.trim() : "application/octet-stream";
+  const type = mimeType.trim();
+  return HEADER_SAFE_TYPE.test(type) && isAllowedType(type) ? type : "application/octet-stream";
 }
 
 /**

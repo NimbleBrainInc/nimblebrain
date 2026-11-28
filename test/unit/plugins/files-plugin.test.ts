@@ -395,6 +395,30 @@ describe("the transfer handler", () => {
       expect(res.headers.get("access-control-allow-origin")).toBeNull();
     }
   });
+
+  test("accepts only the token as issued, not another spelling of its secret", async () => {
+    const made = await ok(
+      "create",
+      { manifest: { filename: "s.txt", mimeType: "text/plain" }, body: "s", encoding: "text" },
+      person,
+    );
+    const resolved = await ok("resolve", { version: "1.0", uris: [`files://${made.id}`] });
+    const url = resolved.files[0].download.url as string;
+    expect((await transfers.handle(new Request(url))).status).toBe(200);
+    const stem = url.slice(0, -1);
+    const secret = url.slice(url.lastIndexOf(".") + 1);
+    const bytes = Buffer.from(secret, "base64url");
+    // The last of 43 characters carries 2 unused bits: 3 other characters decode alike.
+    const aliases = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"]
+      .map((ch) => stem + ch)
+      .filter(
+        (u) => u !== url && Buffer.from(u.slice(u.lastIndexOf(".") + 1), "base64url").equals(bytes),
+      );
+    expect(aliases).toHaveLength(3);
+    for (const bad of [...aliases, `${url}=`, `${url}%21`]) {
+      expect((await transfers.handle(new Request(bad))).status).toBe(404);
+    }
+  });
 });
 
 describe("extraction", () => {

@@ -56,6 +56,7 @@ import type {
   ConversationSummary,
   CreateConversationOptions,
   ListOptions,
+  RunDoneEvent,
   StoredMessage,
 } from "./types.ts";
 
@@ -117,6 +118,8 @@ export function overlayListActive(
 
 /** The largest page `events` serves. */
 const EVENTS_PAGE = 5000;
+/** The page a tail read steps back by. */
+const TAIL_PAGE = 200;
 
 function codeOf(err: unknown): string | undefined {
   const code = (err as { code?: unknown } | null)?.code;
@@ -202,6 +205,24 @@ export interface ContractConversations {
   settle(workspaceId: string): Promise<void>;
   /** Settle every queued write. */
   flush(): Promise<void>;
+}
+
+/**
+ * Walk one page of events back from its end, recording the runs that ended.
+ * Answers the last run's id when it is open, null when it ended or a user
+ * message follows it, and undefined when the page holds no boundary.
+ */
+function lastRunIn(
+  rows: Array<{ event: ConversationEvent }>,
+  ended: Set<string>,
+): string | null | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const e = rows[i]?.event;
+    if (e?.type === "run.done" || e?.type === "run.error") ended.add(e.runId);
+    else if (e?.type === "run.start") return ended.has(e.runId) ? null : e.runId;
+    else if (e?.type === "user.message") return null;
+  }
+  return undefined;
 }
 
 export function createContractConversations(
@@ -342,6 +363,26 @@ export function createContractConversations(
     }
   }
 
+  /**
+   * The id of the conversation's last run when it has a start and no end, read
+   * from the tail: pages back from the last event to the last run boundary. A
+   * user message after the last run means no run is open.
+   */
+  async function openTrailingRun(scope: ContractScope, id: string): Promise<string | null> {
+    await settled(scope, id);
+    const head = await call("events", { id, limit: 1 }, scope);
+    let throughSeq = Number(head.lastSeq ?? 0);
+    const ended = new Set<string>();
+    while (throughSeq > 0) {
+      const afterSeq = Math.max(0, throughSeq - TAIL_PAGE);
+      const page = await call("events", { id, afterSeq, throughSeq, limit: TAIL_PAGE }, scope);
+      const found = lastRunIn(page.events as Array<{ event: ConversationEvent }>, ended);
+      if (found !== undefined) return found;
+      throughSeq = afterSeq;
+    }
+    return null;
+  }
+
   function forScope(scope: ContractScope, onMutate?: () => void): ConversationEventStore {
     let active: string | null = null;
     const written = <T>(p: Promise<T>): Promise<T> => p.finally(() => onMutate?.());
@@ -397,6 +438,20 @@ export function createContractConversations(
       },
 
       readEvents: (id) => readEvents(scope, id),
+
+      async closeInterruptedRun(id, idle) {
+        const runId = await openTrailingRun(scope, id);
+        if (!runId || idle?.() === false) return false;
+        const end: RunDoneEvent = {
+          ts: new Date().toISOString(),
+          type: "run.done",
+          runId,
+          stopReason: "interrupted",
+          totalMs: 0,
+        };
+        await written(enqueue(scope, id, [end]));
+        return true;
+      },
 
       async history(conversation: Conversation, limit?: number): Promise<StoredMessage[]> {
         const messages = reconstructMessages(await readEvents(scope, conversation.id));

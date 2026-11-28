@@ -234,7 +234,6 @@ export function BatchProgress({ batch }: { batch: TaskBatch }) {
       <div className="batch-counts">
         <span className="batch-count batch-count-pass">✓ {counts.pass} pass</span>
         <span className="batch-count batch-count-fail">✗ {counts.fail} fail</span>
-        <span className="batch-count batch-count-uncertain">? {counts.uncertain} uncertain</span>
         {counts.not_assessed > 0 && (
           <span className="batch-count">{counts.not_assessed} not assessed</span>
         )}

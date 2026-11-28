@@ -24,7 +24,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
@@ -153,8 +153,12 @@ function spooled(): string[] {
   return existsSync(dir) ? readdirSync(dir) : [];
 }
 
+/** A spool file a process that stopped mid-upload left behind. */
+const LEFT_SPOOL = join(testDir, "tmp", "intake", "0123456789abcdef0123456789abcdef.part");
+
 beforeAll(async () => {
-  mkdirSync(testDir, { recursive: true });
+  mkdirSync(join(testDir, "tmp", "intake"), { recursive: true });
+  writeFileSync(LEFT_SPOOL, "half an upload");
   runtime = await Runtime.start({
     identityProvider: devProvider,
     languageModel: model,
@@ -172,6 +176,13 @@ afterAll(async () => {
   await runtime?.shutdown();
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
 }, 30_000);
+
+describe("the intake's spool", () => {
+  it("is swept at boot of what a process that stopped mid-request left", () => {
+    expect(existsSync(LEFT_SPOOL)).toBe(false);
+    expect(spooled()).toEqual([]);
+  });
+});
 
 describe("the default binding", () => {
   it("binds the files plugin and serves its public tools only", async () => {
@@ -226,6 +237,37 @@ describe("a chat turn's attachments", () => {
       expect(f.conversationId).toBe(conversationId);
       expect(f.source).toBe("chat");
     }
+  }, 30_000);
+
+  it("come back with the message on reload, as its files, and the person's text alone", async () => {
+    const form = new FormData();
+    form.append("message", "summarize this");
+    form.append("files", new File(["delta epsilon"], "brief.txt", { type: "text/plain" }));
+    const res = await rest(`/v1/workspaces/${WS}/chat/start`, { method: "POST", body: form });
+    expect(res.status).toBe(200);
+    const { conversationId } = await readJson<ChatStartResponse>(res);
+    const source = runtime.getIdentitySource("conversations");
+    if (!source) throw new Error("no conversations source");
+    const get = () =>
+      runWithRequestContext({ identity: OWNER, workspaceId: WS }, () =>
+        source.execute("get", { id: conversationId, expand: "full" }),
+      );
+    type Got = {
+      messages: Array<{ role: string; content: string; files?: Array<{ filename: string }> }>;
+    };
+    let got: Got = { messages: [] };
+    await eventually(
+      async () => {
+        got = answer<Got>(await get());
+        return got.messages.some((m) => m.role === "user");
+      },
+      20_000,
+      "the stored user message",
+    );
+    const user = got.messages.find((m) => m.role === "user");
+    expect(user?.content).toBe("summarize this");
+    expect(user?.files?.map((f) => f.filename)).toEqual(["brief.txt"]);
+    expect(JSON.stringify(got.messages)).not.toContain("--- Attached:");
   }, 30_000);
 
   it("are refused all together when one breaks a check, and nothing is stored", async () => {
@@ -586,4 +628,41 @@ describe("workspace delete", () => {
     expect(purge).toEqual({ purged: true, connectors: [] });
     expect(existsSync(join(PLUGIN_DATA, "workspaces", PURGED))).toBe(false);
   }, 30_000);
+});
+
+describe("a files server that restarts", () => {
+  /** Kill the bound files server, as a crash would. */
+  function killServer(): void {
+    const found = Bun.spawnSync(["pgrep", "-f", `nb-files --data-dir ${PLUGIN_DATA}`]);
+    const pids = found.stdout.toString().trim().split("\n").filter(Boolean);
+    expect(pids.length).toBeGreaterThan(0);
+    for (const pid of pids) process.kill(Number(pid), "SIGKILL");
+  }
+
+  function listCall(): Promise<Response> {
+    return rest(`/v1/workspaces/${WS}/tools/call`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ server: "files", tool: "list", args: {} }),
+    });
+  }
+
+  function upload(): Promise<Response> {
+    const form = new FormData();
+    form.append("file", new File(["after a restart"], "restart.txt", { type: "text/plain" }));
+    return rest(`/v1/workspaces/${WS}/resources`, { method: "POST", body: form });
+  }
+
+  it("answers calls made meanwhile, or a retryable 503; never not found or refused", async () => {
+    for (let round = 0; round < 3; round++) {
+      killServer();
+      // Let the host see the exit, so the calls below race the restart it starts.
+      await Bun.sleep(200);
+      const answers = await Promise.all([listCall(), upload(), listCall(), upload(), listCall()]);
+      for (const res of answers) expect([200, 503]).toContain(res.status);
+    }
+    // Once it is back, every call is answered.
+    await eventually(async () => (await listCall()).status === 200);
+    expect((await upload()).status).toBe(200);
+  }, 60_000);
 });

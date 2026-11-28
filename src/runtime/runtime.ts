@@ -99,8 +99,9 @@ import { AgentRuntimeError } from "../execution/agent-runtime-error.ts";
 import { NATIVE_RUNTIME_ID } from "../execution/native-runtime.ts";
 import { type AgentRuntimes, createAgentRuntimes } from "../execution/registry.ts";
 import type { AgentRuntime } from "../execution/types.ts";
-import { FILES_CONTRACT } from "../files/contract.ts";
+import { FILES_CONTRACT, filesServerEnv } from "../files/contract.ts";
 import { createFilesHost, type FilesHost, type OwnerScope } from "../files/host.ts";
+import { sweepIntakeSpool } from "../files/multipart.ts";
 import { type RehydrateFiles, rehydrateUserResources } from "../files/rehydrate.ts";
 import { DEFAULT_FILE_CONFIG, type FileConfig, READ_TEXT_BOUND } from "../files/types.ts";
 import { fileIdToUri } from "../files/uri.ts";
@@ -391,7 +392,7 @@ import {
   TASKS_CONTRACT,
 } from "./run-worker.ts";
 import { buildSkillsLoadedPayload, collectLoadedSkills } from "./skills-loaded-payload.ts";
-import { createSpendBalances, type SpendBalances } from "./spend.ts";
+import { createSpendBalances, type SpendBalances, type SpendHold } from "./spend.ts";
 import { isStreamedRunEvent } from "./turn-stream.ts";
 import type {
   ChatRequest,
@@ -442,6 +443,42 @@ async function calibrationForConversation(
     recordedHistory: reconstructMessages(events),
     estimateCorrection: tokenEstimateCorrection(events, model),
   };
+}
+
+/**
+ * Append a run's opening message to its conversation. A resumed conversation's
+ * last run may have no end: the process that ran it died mid-turn. This turn
+ * holds the conversation, so that run is not running; it is closed as
+ * interrupted before this turn's message.
+ */
+async function appendOpeningMessage(
+  binding: RunConversationBinding,
+  message: StoredMessage,
+): Promise<void> {
+  if (binding.resumed) await closeInterrupted(binding.store, binding.conversation.id);
+  await binding.store.append(binding.conversation, message);
+}
+
+/**
+ * Close a conversation's interrupted last run. A failure leaves the run open
+ * (it still reads as interrupted to every reader) and is logged, never thrown:
+ * it must not stop the turn or the read that asked.
+ */
+async function closeInterrupted(
+  store: ConversationEventStore,
+  conversationId: string,
+  idle?: () => boolean,
+): Promise<void> {
+  try {
+    if (await store.closeInterruptedRun(conversationId, idle)) {
+      log.info("[conversations] closed an interrupted run", { conversationId });
+    }
+  } catch (err) {
+    log.warn("[conversations] could not close an interrupted run", {
+      conversationId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -1404,6 +1441,9 @@ export class Runtime {
       // The work queue opens before the sources that enqueue to it. Its lock
       // makes a second process on this work directory fail here, at boot.
       rt.getWorkQueue();
+      // With the lock held, no other process is mid-request here: what the
+      // intake's spool holds was left by one that stopped.
+      sweepIntakeSpool(rt.getWorkDir());
       // Each binding's server starts before anything reads conversations, and a
       // server that does not start refuses the boot. A bound server is a
       // platform source like the in-process apps: its tools, resources and
@@ -1593,6 +1633,8 @@ export class Runtime {
         overlays,
         grants ? (claims) => grants.sign(claims) : undefined,
         guards,
+        // The operator's per-file limit is the files server's too, by the host's launch convention.
+        new Map([[FILES_CONTRACT, filesServerEnv(this.getFilesConfig().maxFileSize)]]),
       );
       // What each contract refuses an unattended run, by the name agents call it.
       this._unattendedRefused = new Set(
@@ -1791,6 +1833,20 @@ export class Runtime {
    */
   isTurnActive(scope: ContractScope, conversationId: string): boolean {
     return this.runBus.isActive(conversationKey(scope, conversationId));
+  }
+
+  /**
+   * Close the conversation's last run as interrupted when it has a start, no
+   * end, and no turn is running for the conversation here: the process that
+   * ran it stopped mid-turn. A viewer opening the conversation calls it, so
+   * the turn reads as interrupted rather than unanswered.
+   */
+  async closeInterruptedTurn(scope: ContractScope, conversationId: string): Promise<void> {
+    const key = conversationKey(scope, conversationId);
+    const idle = () => !this.runBus.isActive(key) && !this.activeConversations.has(key);
+    if (!idle() || !this.isChatEnabled()) return;
+    const store = this.workspaceConversationStore(scope.workspaceId, scope.ownerId);
+    await closeInterrupted(store, conversationId, idle);
   }
 
   /** Highest event sequence number for a conversation's current/last run. */
@@ -2379,7 +2435,7 @@ export class Runtime {
     // after the gate, is what keeps a refused resume from writing to a log it
     // may no longer act in.
     const userMessage = buildOpeningMessage(spec.input);
-    if (binding) await binding.store.append(binding.conversation, userMessage);
+    if (binding) await appendOpeningMessage(binding, userMessage);
     callEstablished(spec, reqCtx, runId);
 
     // Read the resumed conversation once, before composition: calibration, the
@@ -2778,7 +2834,13 @@ export class Runtime {
     spec: RunSpec,
     engineConfig: EngineConfig,
     agentRuntime: AgentRuntime,
-  ): { release: () => void; grant?: number; boundBy?: string; settle?: EventSink } {
+  ): {
+    release: () => void;
+    grant?: number;
+    boundBy?: string;
+    settle?: EventSink;
+    stopOf?: SpendHold["stopOf"];
+  } {
     const accounts = spec.budget.spendAccounts ?? [];
     const cap = spec.budget.maxRunInputTokens;
     if (!this.holdsByGrant(agentRuntime)) {
@@ -2788,7 +2850,7 @@ export class Runtime {
         rates: resolveRates(spec.model),
       });
       engineConfig.spend = hold;
-      return { release: () => hold.release() };
+      return { release: () => hold.release(), stopOf: hold.stopOf };
     }
     if (!accounts.length) {
       return cap === undefined ? { release: () => {} } : { release: () => {}, grant: cap };
@@ -2801,6 +2863,7 @@ export class Runtime {
     const cappedBelow = cap !== undefined && cap <= share.tokens;
     return {
       release: () => hold.release(),
+      stopOf: hold.stopOf,
       grant: cappedBelow ? cap : share.tokens,
       ...(!cappedBelow && share.accountId !== undefined ? { boundBy: share.accountId } : {}),
       settle: {
@@ -7509,34 +7572,53 @@ function attributeGrantStop(
     RunHandle,
     "stopReason" | "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"
   >,
-  spend: { grant?: number; boundBy?: string },
-): Pick<
-  RunHandle,
-  "stopReason" | "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"
-> {
+  spend: { grant?: number; boundBy?: string; stopOf?: SpendHold["stopOf"] },
+): Pick<RunHandle, "stopReason" | StopDetailField> {
   const detail = stopDetail(result);
   const byGrant =
     spend.grant !== undefined &&
     result.stopReason === "spend_limit" &&
     result.spendAccountId === MODEL_GATEWAY_BUDGET_ACCOUNT;
-  if (!byGrant) return { stopReason: result.stopReason, ...detail };
+  if (!byGrant) return { stopReason: result.stopReason, ...withSpendStop(detail, spend) };
   const { spendAccountId: _gateway, ...rest } = detail;
   return spend.boundBy !== undefined
-    ? { stopReason: "spend_limit", ...rest, spendAccountId: spend.boundBy }
+    ? {
+        stopReason: "spend_limit",
+        ...withSpendStop({ ...rest, spendAccountId: spend.boundBy }, spend),
+      }
     : { stopReason: "max_input_tokens", ...detail };
 }
+
+/** A spend stop by one of the run's own accounts, told as its hold decided it. */
+function withSpendStop(
+  detail: Pick<RunHandle, StopDetailField>,
+  spend: { stopOf?: SpendHold["stopOf"] },
+): Pick<RunHandle, StopDetailField> {
+  const id = detail.spendAccountId;
+  if (id === undefined || id === MODEL_GATEWAY_BUDGET_ACCOUNT || !spend.stopOf) return detail;
+  return { ...detail, spendStop: spend.stopOf(id) };
+}
+
+/** The fields that say why a run stopped, beyond its stop reason. */
+type StopDetailField =
+  | "finishReason"
+  | "finishReasonRaw"
+  | "spendAccountId"
+  | "spendStop"
+  | "wrapUpLimit";
 
 /**
  * Why a run stopped, beyond its stop reason: the fields an engine result, a run
  * handle, and a task result share, copied only when set.
  */
 function stopDetail(
-  r: Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit">,
-): Pick<RunHandle, "finishReason" | "finishReasonRaw" | "spendAccountId" | "wrapUpLimit"> {
+  r: Partial<Pick<RunHandle, StopDetailField>>,
+): Pick<RunHandle, StopDetailField> {
   return {
     ...(r.finishReason !== undefined ? { finishReason: r.finishReason } : {}),
     ...(r.finishReasonRaw !== undefined ? { finishReasonRaw: r.finishReasonRaw } : {}),
     ...(r.spendAccountId !== undefined ? { spendAccountId: r.spendAccountId } : {}),
+    ...(r.spendStop !== undefined ? { spendStop: r.spendStop } : {}),
     ...(r.wrapUpLimit !== undefined ? { wrapUpLimit: r.wrapUpLimit } : {}),
   };
 }
@@ -7696,8 +7778,8 @@ function unpricedOf(partial: { unpricedCalls: () => number }): { unpricedCalls?:
 }
 
 /**
- * Build a user message's content blocks: the text message plus any
- * `resource_link` attachment parts. Falls back to a synthetic `[Uploaded: …]`
+ * Build a user message's content blocks: the text message, then each
+ * attachment's part (a `resource_link`, or its text marked `attached`). Falls back to a synthetic `[Uploaded: …]`
  * text part when there's no text and no text content parts (a file-only upload)
  * so the content is never empty.
  */
@@ -7713,7 +7795,7 @@ function buildUserMessageContent(request: ChatRequest): Array<UserTextPart | Use
   if (request.contentParts?.length) {
     for (const part of request.contentParts) {
       if (part.type === "text") {
-        userContent.push({ type: "text", text: part.text });
+        userContent.push({ type: "text", text: part.text, attached: true });
       } else if (part.type === "resource_link") {
         userContent.push({
           type: "resource_link",

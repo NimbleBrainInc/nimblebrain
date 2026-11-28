@@ -4,8 +4,11 @@
  * body, honouring a single `Range`.
  *
  * A URL is `<origin>/t/<id>.<secret>`: `id` (128 random bits) finds the grant, and `secret`
- * (256 random bits) is compared with the stored one in constant time, so the lookup leaks
- * nothing about the secret. Grants live in this process only: a restart kills every URL,
+ * (256 random bits, base64url) is compared with the text issued, in constant time, so the
+ * lookup leaks nothing about the secret. The text is compared, not its decoded bytes: a
+ * decoder ignores a character's unused low bits, padding and trailing junk, so other
+ * spellings of a secret decode to its bytes, and only the URL issued is a capability.
+ * Grants live in this process only: a restart kills every URL,
  * which the contract allows (an open upload then expires; a host resolves again). Every
  * request that is not a live grant's one operation, whatever it names, is answered alike:
  * 404, empty, no CORS headers. Nothing here logs a request, so a token never reaches a log.
@@ -18,6 +21,7 @@ import type { Store } from "./store.ts";
 export const TRANSFER_PREFIX = "/t/";
 
 interface Grant {
+  /** The secret as issued: base64url text, compared as text. */
   secret: Buffer;
   kind: "upload" | "download";
   workspaceId: string;
@@ -67,9 +71,9 @@ export class Transfers {
 
   #issue(grant: Omit<Grant, "secret">): string {
     const id = randomBytes(16).toString("hex");
-    const secret = randomBytes(32);
-    this.#grants.set(id, { ...grant, secret });
-    return `${this.#opts.origin()}${TRANSFER_PREFIX}${id}.${secret.toString("base64url")}`;
+    const secret = randomBytes(32).toString("base64url");
+    this.#grants.set(id, { ...grant, secret: Buffer.from(secret) });
+    return `${this.#opts.origin()}${TRANSFER_PREFIX}${id}.${secret}`;
   }
 
   issueUpload(workspaceId: string, ownerId: string, uploadId: string, expiresAt: number): string {
@@ -108,7 +112,7 @@ export class Transfers {
     if (dot <= 0) return null;
     const grant = this.#grants.get(token.slice(0, dot));
     if (!grant) return null;
-    const given = Buffer.from(token.slice(dot + 1), "base64url");
+    const given = Buffer.from(token.slice(dot + 1));
     if (given.length !== grant.secret.length || !timingSafeEqual(given, grant.secret)) return null;
     return grant.expiresAt > this.#opts.now() ? grant : null;
   }

@@ -16,9 +16,24 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { type FileHandle, open, rm } from "node:fs/promises";
 import { join } from "node:path";
+
+/** Where a request's file parts are spooled under the runtime's work directory. */
+export function intakeSpoolDir(workDir: string): string {
+  return join(workDir, "tmp", "intake");
+}
+
+/**
+ * Remove whatever the spool holds. A request removes its own spool files when it
+ * ends, so anything here at boot was left by a process that stopped mid-request.
+ * Runs once at boot, after the work directory's lock is held: one process owns
+ * a work directory, so no request of another is reading these.
+ */
+export function sweepIntakeSpool(workDir: string): void {
+  rmSync(intakeSpoolDir(workDir), { recursive: true, force: true });
+}
 
 /** A file part, spooled. */
 export interface SpooledFile {

@@ -101,6 +101,8 @@ const SCREEN_URI = "ui://files/browser";
 const VERSION = "1.0";
 const DEFS_PREFIX = "#/$defs/";
 const MIB = 1024 * 1024;
+/** The characters a URL path carries unescaped, beyond `.` and `~`: base64url's alphabet. */
+const URL_SAFE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 /** Bounds of the contract (CONTRACT.md §6, §7, §12). */
 const MAX_CREATE_BYTES = 4 * MIB;
 const MAX_READ_TEXT_BYTES = MIB;
@@ -1944,9 +1946,15 @@ async function transferCases(c: FullCtx): Promise<void> {
       const ok = await get(dl, { origin: "https://evil.example" });
       assert(!ok.headers.has("access-control-allow-origin"), "CORS on a GET");
       const u = new URL(dl);
-      const tampered = `${u.origin}${u.pathname.slice(0, -2)}${u.pathname.endsWith("A") ? "BB" : "AA"}`;
-      const forged = await get(tampered);
-      eq(forged.status, 404, "a tampered token");
+      // Every other last character, so a token that differs only in bits a decoder
+      // ignores (base64's unused low bits) is held to 404 like any other change.
+      const stem = u.pathname.slice(0, -1);
+      for (const ch of URL_SAFE) {
+        if (stem + ch === u.pathname) continue;
+        const forged = await get(`${u.origin}${stem}${ch}`);
+        eq(forged.status, 404, `a token with its last character changed to ${ch}`);
+        await forged.arrayBuffer();
+      }
       eq((await get(`${u.origin}/`)).status, 404, "the root");
       const pre = await fetch(dl, {
         method: "OPTIONS",

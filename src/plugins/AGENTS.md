@@ -104,7 +104,12 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   looks a server up by contract id (`BoundServer` per contract), never by plugin name. A
   stdio server is started from `mcp.json` with `${PLUGIN_DATA}` at
   `<workDir>/plugin-data/<name>` (created before the start), the SDK's minimal environment
-  plus the server's own `env`, never the runtime's. A binding whose server the operator placed
+  plus the server's own `env`, then the host configuration the kernel passes that contract's
+  server (`ServerEnvironments`, keyed by contract id), never the runtime's. Those variables are
+  a launch convention between the host and the implementation it starts, not part of the MCP
+  contract. The files binding passes `NB_FILES_MAX_FILE_BYTES`, the operator's
+  `files.maxFileSize` (`filesServerEnv`, `src/files/contract.ts`); the files server takes
+  `--max-file-bytes` over it, and it over its own 25 MiB default. A binding whose server the operator placed
   at a `url` is refused at boot until the kernel holds a host credential for it.
 - **One connection per bound server, one `McpSource` (mode `plugin`).** Agents (the
   ToolRouter), the `/mcp/<wsId>` door and the app bridge reach the server through that
