@@ -79,7 +79,7 @@ export async function seedPluginsDemo(opts: SeedOptions): Promise<SeedSummary> {
   // `McpOAuthRecords` reaches the installed store, as it does inside the runtime.
   setCredentialStore(credentials);
 
-  const { entries } = await new ConnectorCatalog(opts.catalogDir).list({});
+  const entries = await new ConnectorCatalog(opts.catalogDir).listings();
   const catalog = new Map(entries.map((e) => [e.id, e]));
 
   await ensureDevUser(opts.workDir);

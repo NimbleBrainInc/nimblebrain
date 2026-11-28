@@ -2,6 +2,8 @@ import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { browseCatalog } from "../../src/catalogs/browse.ts";
+import { noCatalogListings } from "../../src/catalogs/reader.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { log } from "../../src/observability/log.ts";
 
@@ -44,11 +46,28 @@ function remoteServer(over: Record<string, unknown> = {}): Record<string, unknow
   };
 }
 
+/**
+ * Browse over the catalog alone: with no listings, every record is a row of the
+ * reserved `curated` catalog, so this reads the connector list's projection,
+ * dedupe and scrub exactly as Browse applies them.
+ */
+function list(
+  catalog: ConnectorCatalog,
+  opts: { isOAuthClientConfigured?: (id: string, key: string) => Promise<boolean> } = {},
+) {
+  return browseCatalog({
+    listings: noCatalogListings(),
+    connectorCatalog: catalog,
+    brokers: { has: () => false },
+    ...opts,
+  });
+}
+
 afterEach(() => {
   if (workDir) rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("ConnectorCatalog.list", () => {
+describe("ConnectorCatalog through Browse", () => {
   test("aggregates entries from every catalog file, projecting to CatalogListing", async () => {
     const catalogDir = freshCatalog();
     writeStaticCatalog(
@@ -76,7 +95,7 @@ describe("ConnectorCatalog.list", () => {
       "echo.yaml",
     );
 
-    const result = await new ConnectorCatalog(catalogDir).list();
+    const result = await list(new ConnectorCatalog(catalogDir));
     expect(result.errors).toEqual([]);
     expect(result.entries.map((e) => e.id).sort()).toEqual([
       "ai.granola/mcp",
@@ -111,7 +130,7 @@ describe("ConnectorCatalog.list", () => {
     );
     chmodSync(unreadable, 0o000);
     try {
-      const result = await new ConnectorCatalog(catalogDir).list();
+      const result = await list(new ConnectorCatalog(catalogDir));
       expect(result.entries.map((e) => e.id)).toEqual(["ai.granola/mcp"]);
       expect(result.errors.length).toBe(1);
       expect(result.errors[0]?.file).toBe(unreadable);
@@ -140,7 +159,7 @@ describe("ConnectorCatalog.list", () => {
       },
     ]);
 
-    const result = await new ConnectorCatalog(catalogDir).list();
+    const result = await list(new ConnectorCatalog(catalogDir));
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]?.description).toBe("first");
   });
@@ -177,7 +196,7 @@ describe("ConnectorCatalog.list", () => {
       },
     ]);
     const probe = mock(async () => true);
-    const result = await new ConnectorCatalog(catalogDir).list({ isOAuthClientConfigured: probe });
+    const result = await list(new ConnectorCatalog(catalogDir), { isOAuthClientConfigured: probe });
     // Only Asana (static-auth + oauthClientSetup) gets probed; Granola (dcr) doesn't.
     expect(probe).toHaveBeenCalledTimes(1);
     const asana = result.entries.find((e) => e.id === "io.asana/mcp");
@@ -202,7 +221,7 @@ describe("ConnectorCatalog.list", () => {
       },
     ]);
 
-    const result = await new ConnectorCatalog(catalogDir).list();
+    const result = await list(new ConnectorCatalog(catalogDir));
     expect(result.entries).toEqual([]);
   });
 });
@@ -221,7 +240,7 @@ describe("ConnectorCatalog lookup tables", () => {
     ]);
 
     const directory = new ConnectorCatalog(catalogDir);
-    await directory.list();
+    await list(directory);
     // Delete the catalog out from under the directory: a second read would
     // now fail, so surviving these calls proves the fetch was memoized.
     rmSync(path);
@@ -273,7 +292,7 @@ describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
   async function listWith(server: Record<string, unknown>) {
     const catalogDir = freshCatalog();
     writeStaticCatalog([server]);
-    return new ConnectorCatalog(catalogDir).list();
+    return list(new ConnectorCatalog(catalogDir));
   }
 
   test("drops an entry whose _meta.docsUrl carries a javascript: scheme", async () => {

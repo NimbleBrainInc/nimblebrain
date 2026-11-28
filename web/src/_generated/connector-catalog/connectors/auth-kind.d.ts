@@ -39,9 +39,8 @@ export declare function isRuntimeNativeAuthKind(kind: string): kind is RuntimeNa
  * Whether `kind` names a brokered provider — i.e. anything that is not
  * runtime-native. Whether a provider is actually *registered* for it is a
  * separate question, answered by `ManagedConnectorRegistry.get`: a catalog may
- * legitimately offer a connector this deployment has not configured a broker
- * for, and it must still render in Browse and refuse at install rather than
- * vanish depending on deploy config.
+ * legitimately list a connector this deployment has not configured a broker
+ * for. Browse hides it (`src/catalogs/browse.ts`), and install refuses it.
  */
 export declare function isBrokeredAuthKind(kind: string): boolean;
 /**

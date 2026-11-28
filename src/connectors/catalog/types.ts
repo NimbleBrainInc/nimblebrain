@@ -22,16 +22,32 @@ import type {
 } from "./server-detail.ts";
 
 /**
+ * Whether a Browse row can be installed now: `ready`, or `setup` when a static
+ * entry's OAuth client has to be added first (admins only). Derived from the
+ * auth its catalog entry declares (`src/catalogs/browse.ts`).
+ */
+export type BrowseStatus = "ready" | "setup";
+
+/**
  * One row in the Browse list. The install dispatch happens via the
  * `install` discriminated union.
  */
 export interface CatalogListing {
   /**
-   * Stable identifier — the upstream `ServerDetail.name` (reverse-DNS
-   * form). Unique across the catalog; the first file (sorted) wins when
-   * two files carry the same id.
+   * The server's registry name (`ServerDetail.name`, reverse-DNS form): what
+   * install resolves to the connector list's record. Two catalogs listing one
+   * server give two rows with this id and distinct `address`es.
    */
   id: string;
+  /**
+   * `name@catalog`, the catalog item this row is (ADR-0077). Unique within an
+   * instance. Set on every Browse row; absent on an install request.
+   */
+  address?: string;
+  /** The catalog the row comes from. Set on every Browse row. */
+  catalog?: string;
+  /** Whether the row installs now or needs setup first. Set on every Browse row. */
+  status?: BrowseStatus;
   name: string;
   description: string;
   iconUrl?: string;
@@ -264,23 +280,4 @@ export interface DirectUrlInstall {
   kind: "direct-url";
   url: string;
   serverName?: string;
-}
-
-/**
- * Per-call context handed to `ConnectorCatalog.list`. Carries the
- * pieces a workspace-aware projection might need (e.g.
- * `oauthClientConfigured` on static entries) without coupling the
- * directory to the runtime singleton.
- */
-export interface ListEntriesContext {
-  /** The workspace whose state determines workspace-aware fields. */
-  wsId?: string;
-  /**
-   * Async lookup: does the workspace have valid OAuth client
-   * config (both clientId + client_secret) for this catalog id?
-   * Returns false if either piece is missing. Returns null if the
-   * caller didn't supply this resolver — the projection treats that
-   * as "I can't compute this; leave the field undefined."
-   */
-  isOAuthClientConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>;
 }

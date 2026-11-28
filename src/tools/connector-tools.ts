@@ -1,5 +1,6 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { brandName } from "../brand/index.ts";
+import { type BrowseResult, browseCatalog } from "../catalogs/browse.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
@@ -627,23 +628,30 @@ async function handleListCatalog(
   };
 }
 
+/** Browse's rows for this runtime: its catalogs' listings over its connector list. */
+function browse(
+  ctx: ManageConnectorsContext,
+  isOAuthClientConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>,
+): Promise<BrowseResult> {
+  return browseCatalog({
+    listings: ctx.runtime.getCatalogListings(),
+    connectorCatalog: ctx.runtime.getConnectorCatalog(),
+    brokers: ctx.runtime.getManagedConnectorRegistry(),
+    ...(isOAuthClientConfigured ? { isOAuthClientConfigured } : {}),
+  });
+}
+
 /**
- * Aggregate every enabled registry's entries into a single browseable
- * directory. Replaces the catalog-only `list_catalog` for the Browse
- * page — Browse needs the unified shape so registry entries and curated
- * remote services render side-by-side.
+ * Browse: every configured catalog's listed items, side by side, each
+ * addressed `name@catalog` with a status (`src/catalogs/browse.ts`, ADR-0077).
  *
- * Per-registry failures are isolated and surfaced in `errors` so the
- * UI can show partial results with a "missing X" hint. Workspace
- * `connectorsAllowList` filters apply only to curated entries today
- * (upstream registries have not shipped a scoping primitive yet).
+ * A catalog that could not be read, and a connector-list file that could not,
+ * are surfaced in `errors` so the UI can show partial results.
  */
 async function handleListDirectory(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const directory = ctx.runtime.getConnectorCatalog();
-
   // Hoist the workspace fetch + credential-store handle out of the
   // closure so the closure does at most one disk read per static-auth
   // catalog entry. With it inlined the Browse page would fan out to
@@ -665,10 +673,7 @@ async function handleListDirectory(
         }
       : undefined;
 
-  const result = await directory.list({
-    ...(wsId ? { wsId } : {}),
-    ...(isOAuthClientConfigured ? { isOAuthClientConfigured } : {}),
-  });
+  const result = await browse(ctx, isOAuthClientConfigured);
   // Each entry says whether one person can install it on their own account, so
   // Browse offers "Just me" only where the identity install accepts it.
   const entries = result.entries.map((e) => ({
@@ -3813,7 +3818,7 @@ async function handleListPersonalCatalog(
 
   // Personal connectors are identity-owned and workspace-independent: read the
   // whole directory (no wsId → no workspace allow-list) and filter.
-  const { entries } = await ctx.runtime.getConnectorCatalog().list({});
+  const { entries } = await browse(ctx);
 
   // Drop connectors the caller already installed on their identity.
   const installed = await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(

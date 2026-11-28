@@ -3,10 +3,12 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { noCatalogListings } from "../../src/catalogs/reader.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { extractText, textContent } from "../../src/engine/content-helpers.ts";
 import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
 import { MAX_TOOL_RESULT_CHARS } from "../../src/limits.ts";
@@ -859,6 +861,8 @@ describe("search — scope: catalog", () => {
     writeFileSync(join(catalogDir, "catalog.json"), JSON.stringify({ servers }));
     return stub<Runtime>({
       getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
+      getCatalogListings: () => noCatalogListings(),
+      getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
     });
   }
 
@@ -944,6 +948,8 @@ describe("search — scope: catalog", () => {
     chmodSync(unreadable, 0o000);
     const runtime = stub<Runtime>({
       getConnectorCatalog: () => new ConnectorCatalog(unreadable),
+      getCatalogListings: () => noCatalogListings(),
+      getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
     });
     try {
       const result = await search(runtime, "asana");

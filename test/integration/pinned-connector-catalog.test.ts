@@ -1,6 +1,6 @@
 /**
- * With no catalog directory mounted, Browse lists the pinned plugin catalog's
- * connectors: fetched at boot from `NB_PLUGIN_CATALOG_URL`, verified against
+ * With no catalog directory mounted, the connector list install reads server
+ * records from is the pinned plugin catalog's: fetched at boot from `NB_PLUGIN_CATALOG_URL`, verified against
  * the pin, and cached in the work directory, so a restart with the catalog
  * unreachable lists the same connectors, and a first boot with no catalog and
  * no cache starts with an empty one instead of failing.
@@ -48,7 +48,7 @@ function startCatalog(): string {
   return `http://127.0.0.1:${server.port}`;
 }
 
-async function browse(dir: string): Promise<string[]> {
+async function connectorList(dir: string): Promise<string[]> {
   const runtime = await Runtime.start({
     identityProvider: devProvider,
     languageModel: createEchoModel(),
@@ -56,8 +56,7 @@ async function browse(dir: string): Promise<string[]> {
     workDir: dir,
   });
   try {
-    const { entries } = await runtime.getConnectorCatalog().list();
-    return entries.map((e) => e.id);
+    return (await runtime.getConnectorCatalog().listings()).map((e) => e.id);
   } finally {
     await runtime.shutdown();
   }
@@ -83,25 +82,25 @@ afterEach(async () => {
 });
 
 describe("the pinned connector catalog", () => {
-  test("Browse lists it, and a restart with the catalog unreachable reads the cache", async () => {
+  test("install reads it, and a restart with the catalog unreachable reads the cache", async () => {
     process.env.NB_PLUGIN_CATALOG_URL = startCatalog();
-    expect(await browse(workDir)).toEqual(["com.example/fixture"]);
+    expect(await connectorList(workDir)).toEqual(["com.example/fixture"]);
 
     await server?.stop(true);
     server = null;
     process.env.NB_PLUGIN_CATALOG_URL = OFFLINE_PLUGIN_CATALOG_URL;
     resetPinnedConnectorAttempts();
-    expect(await browse(workDir)).toEqual(["com.example/fixture"]);
+    expect(await connectorList(workDir)).toEqual(["com.example/fixture"]);
   }, 30_000);
 
-  test("a list that does not match the pin is not listed", async () => {
+  test("a list that does not match the pin is not read", async () => {
     process.env.NB_PLUGIN_CATALOG_URL = startCatalog();
     process.env.NB_PLUGIN_CATALOG_CONNECTORS_SHA256 = "e".repeat(64);
-    expect(await browse(workDir)).toEqual([]);
+    expect(await connectorList(workDir)).toEqual([]);
   }, 30_000);
 
   test("no catalog and no cache boots with an empty catalog", async () => {
     process.env.NB_PLUGIN_CATALOG_URL = OFFLINE_PLUGIN_CATALOG_URL;
-    expect(await browse(workDir)).toEqual([]);
+    expect(await connectorList(workDir)).toEqual([]);
   }, 30_000);
 });

@@ -769,7 +769,7 @@ describe("a catalog entry written entirely in snake_case", () => {
     const member = await mcpClient(MEMBER_WS);
     const admin = await mcpClient(ADMIN_WS);
     try {
-      const { entries } = await runtime.getConnectorCatalog().list();
+      const entries = await runtime.getConnectorCatalog().listings();
       expect(entries.map((e) => e.id)).not.toContain("ai.acme/crm");
 
       const memberNames = (await member.listTools()).tools.map((t) => t.name);

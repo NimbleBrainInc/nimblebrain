@@ -1,27 +1,26 @@
 /**
- * `ConnectorCatalog` is the one place connectors come from.
+ * `ConnectorCatalog` is the connector list: the server records (`ServerDetail`,
+ * the shape the upstream MCP registry publishes) that install, binding and the
+ * Configure page read.
  *
- * It reads one catalog of `ServerDetail` records — the shape the upstream MCP
- * registry publishes — validates and safety-scrubs every entry, projects the
- * survivors into the two shapes callers need, and serves the lookup tables the
- * Configure page and the installed list read.
+ * It reads one list, validates and safety-scrubs every entry, projects the
+ * survivors, and serves the lookup tables the Configure page and the installed
+ * list read. Browse is built from catalog listings (`src/catalogs/browse.ts`),
+ * and takes each row's install action from here, because install re-resolves a
+ * row by its server's registry name to this list's record (ADR-0077, step 1;
+ * a later step installs from the entry's artifact instead).
  *
- * **Where the catalog comes from** (`catalogLocation`), one source at a time:
+ * **Where the list comes from** (`catalogLocation`), one source at a time:
  *
  * - **The pinned plugin catalog**, by default: the connector list of the catalog
  *   at `NB_PLUGIN_CATALOG_URL` (catalog.nimblebrain.ai), verified against the
- *   image's pin and cached in the work directory (`pinned.ts`). It is the same
- *   catalog connector skills come from, so dev, a local install and a release
- *   image show one list, and moving it forward is bumping the pin. An operator
- *   with their own list publishes their own catalog and points the URL and pins
- *   at it.
+ *   image's pin and cached in the work directory (`pinned.ts`).
  * - **A directory**, when `NB_CURATED_CATALOG_DIR` names one: it replaces the
- *   pinned catalog wholesale, never merges with it. A mounted directory is
- *   trusted by whoever mounts it, so it needs no pin and an edit takes effect on
- *   the next read. It holds what the pinned list cannot: entries that need
- *   instance setup (`auth: static`, brokered toolkits), a server in development,
- *   a test's fixtures. Replacing rather than merging keeps one answer to where
- *   an entry came from.
+ *   pinned list wholesale, never merges with it. A mounted directory is trusted
+ *   by whoever mounts it, so it needs no pin and an edit takes effect on the
+ *   next read. It holds what the pinned list cannot: entries that need instance
+ *   setup (`auth: static`, brokered toolkits), fleet services, a server in
+ *   development, a test's fixtures.
  *
  * Composition across files is the read's own concern: every
  * `*.yaml`/`*.yml`/`*.json` in a directory is read in sorted order,
@@ -47,13 +46,7 @@ import {
 } from "./projection.ts";
 import { readCatalogEntries } from "./read.ts";
 import type { ServerDetail } from "./server-detail.ts";
-import type { CatalogListing, ConnectorCatalogEntry, ListEntriesContext } from "./types.ts";
-
-/** Browse-list result: surviving listings + the files that failed. */
-export interface AggregatedCatalog {
-  entries: CatalogListing[];
-  errors: CatalogError[];
-}
+import type { CatalogListing, ConnectorCatalogEntry } from "./types.ts";
 
 /** Raw-shape result for callers that need `ServerDetail[]` directly. */
 export interface AggregatedServers {
@@ -124,9 +117,9 @@ export async function warnIfCatalogEmpty(catalog: ConnectorCatalog): Promise<voi
   if (servers.length > 0) return;
   const why = errors.length > 0 ? ` (${errors.map((e) => e.message).join("; ")})` : "";
   log.warn(
-    `[catalog] the connector catalog resolved to 0 entries${why} — Browse will be empty until ` +
-      `the plugin catalog is reachable (NB_PLUGIN_CATALOG_URL) or ${CATALOG_DIR_ENV} names a ` +
-      "non-empty directory.",
+    `[catalog] the connector list resolved to 0 entries${why} — nothing in Browse can be ` +
+      `installed until the plugin catalog is reachable (NB_PLUGIN_CATALOG_URL) or ` +
+      `${CATALOG_DIR_ENV} names a non-empty directory.`,
   );
 }
 
@@ -150,50 +143,25 @@ export class ConnectorCatalog {
   }
 
   /**
-   * Browse-shaped result. Same data as `servers()` projected through
-   * `projectServerDetailToCatalogListing`, deduped first-wins by id.
-   *
-   * `ctx.isOAuthClientConfigured` is awaited per static-auth entry to
-   * compute `oauthClientConfigured` — DCR / unknown entries skip the probe.
+   * Every installable record as an install action's listing, first wins by id:
+   * what Browse takes each row's `install` from, and what `listingById`
+   * resolves. A record that is not installable (no remote, an unsupported
+   * transport) is logged and left out.
    */
-  async list(ctx?: ListEntriesContext): Promise<AggregatedCatalog> {
-    const { servers, errors } = await this.servers();
-
-    const entries: CatalogListing[] = [];
-    const seen = new Set<string>();
+  async listings(): Promise<CatalogListing[]> {
+    const { servers } = await this.servers();
+    const out = new Map<string, CatalogListing>();
     for (const { file, detail } of servers) {
-      const entry = projectServerDetailToCatalogListing(detail);
-      if (!entry) {
-        // Projection returned null = the entry is not installable by this
-        // runtime (no remotes, or an unsupported transport — a
-        // `packages[]`-only entry is a downloadable connector, which this
-        // runtime does not acquire). Log so an operator debugging "why
-        // doesn't my entry appear in Browse?" sees the cause instead of a
-        // silent omission.
+      const listing = projectServerDetailToCatalogListing(detail);
+      if (!listing) {
         log.warn(
           `[catalog] [${file}] entry "${detail.name}" dropped — not installable as a remote MCP server`,
         );
         continue;
       }
-      if (seen.has(entry.id)) continue;
-      seen.add(entry.id);
-
-      // Workspace-aware probe for static-auth entries only — the rest
-      // skip it so the field stays undefined (UI renders no badge).
-      if (
-        entry.install.kind === "remote-oauth" &&
-        entry.install.auth === "static" &&
-        entry.install.oauthClientSetup &&
-        ctx?.isOAuthClientConfigured
-      ) {
-        entry.oauthClientConfigured = await ctx.isOAuthClientConfigured(
-          entry.id,
-          entry.install.oauthClientSetup.clientSecretKey,
-        );
-      }
-      entries.push(entry);
+      if (!out.has(listing.id)) out.set(listing.id, listing);
     }
-    return { entries, errors };
+    return [...out.values()];
   }
 
   /**
@@ -224,8 +192,8 @@ export class ConnectorCatalog {
   }
 
   /**
-   * The Browse listing for one id, matched exactly, or `null` when the catalog
-   * lists none. Same projection and first-wins dedupe as `list()`. An install
+   * The install action's listing for one id, matched exactly, or `null` when the
+   * list holds none. The same projection and first-wins rule Browse uses. An install
    * resolves the requested id to this, so what gets installed is the operator's
    * entry and never the caller's copy of it.
    */
