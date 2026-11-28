@@ -187,7 +187,9 @@ export class Store {
 
   /** Forget an open upload: its call committed its file. */
   closeUpload(workspaceId: string, uploadId: string): void {
-    this.#open.get(workspaceId)?.delete(uploadId);
+    const open = this.#open.get(workspaceId);
+    open?.delete(uploadId);
+    if (open?.size === 0) this.#open.delete(workspaceId);
   }
 
   /**
@@ -202,15 +204,19 @@ export class Store {
       open?.delete(upload.id);
       removeUploadFiles(this.#dir(workspaceId), upload.id);
     }
+    if (open?.size === 0) this.#open.delete(workspaceId);
     const state = this.#cache.get(workspaceId);
     for (const [id, done] of Object.entries(state?.completed ?? {})) {
       if (stale(done.expiresAt)) delete state?.completed[id];
     }
   }
 
-  /** The workspaces loaded in this process. */
-  loaded(): string[] {
-    return [...this.#cache.keys()];
+  /**
+   * The workspaces holding anything to retire: each loaded one, and each with an open upload.
+   * An open upload outlives its workspace's eviction from the cache, so it is found on its own.
+   */
+  held(): string[] {
+    return [...new Set([...this.#cache.keys(), ...this.#open.keys()])];
   }
 
   /** Where a file's body is, or null when it has none. */

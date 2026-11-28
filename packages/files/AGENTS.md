@@ -101,8 +101,9 @@ How to run it standalone is in `README.md`.
   (`COMPLETION_GRACE_MS`), and a repeat answers the first `{ uri, file }` (rebuilt from what the
   completed upload keeps, so tags or a move since do not change it) while that file exists, in
   that same window. Past the window an upload is retired, an open one with its bytes, on the
-  next call into its workspace and every minute for a loaded workspace. Retiring commits
-  nothing: a retired completed upload leaves `state.json` with the next commit.
+  next call into its workspace and every minute for each workspace that is loaded or has an
+  open upload. Retiring commits nothing: a retired completed upload leaves `state.json` with
+  the next commit.
 - **A download GET re-checks the record**: a file deleted since its URL was issued is 404.
 - **The per-file limit** for `begin_upload` is `--max-file-bytes`, else `NB_FILES_MAX_FILE_BYTES`,
   else 25 MiB. The variable is a launch convention, not part of the contract: the runtime's

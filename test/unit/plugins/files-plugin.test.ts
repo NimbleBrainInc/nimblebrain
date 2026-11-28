@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cutText, extractText } from "../../../packages/files/src/extract.ts";
 import { fileKind, recordedType } from "../../../packages/files/src/mime.ts";
-import { COMPLETION_GRACE_MS } from "../../../packages/files/src/private.ts";
+import { COMPLETION_GRACE_MS, sweepUploads } from "../../../packages/files/src/private.ts";
 import { callTool, envOf } from "../../../packages/files/src/server.ts";
 import { Store } from "../../../packages/files/src/store.ts";
 import { parseRange, Transfers } from "../../../packages/files/src/transfer.ts";
@@ -419,6 +419,35 @@ describe("upload windows, on the plugin's clock", () => {
     expect((await put).status).toBe(204);
     const done = await ok("complete_upload", { version: "1.0", uploadId: begun.uploadId });
     expect(done.file.size).toBe(4);
+  });
+
+  test("the sweep retires an upload whose workspace was evicted while its PUT streamed", async () => {
+    const begun = await ok("begin_upload", {
+      version: "1.0",
+      filename: "evicted.txt",
+      mimeType: "text/plain",
+      size: 4,
+      source: "app",
+    });
+    let push!: (chunk: Uint8Array | null) => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (chunk) => (chunk ? controller.enqueue(chunk) : controller.close());
+      },
+    });
+    const put = transfers.handle(new Request(begun.url, { method: "PUT", body }));
+    await Bun.sleep(10);
+    expect(code(await call("delete", { id: "fl_absent" }, person))).toBe("file_not_found");
+    push(new TextEncoder().encode("gone"));
+    push(null);
+    expect((await put).status).toBe(204);
+    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([begun.uploadId]);
+    clock = Date.parse(begun.expiresAt) + COMPLETION_GRACE_MS + 1;
+    // The plugin's timer: every workspace the store holds, with no workspace call between.
+    for (const ws of store.held()) sweepUploads({ store, now: () => clock }, ws);
+    expect(store.upload(WS, begun.uploadId)).toBeUndefined();
+    expect(readdirSync(join(wsDir(), "uploads"))).toEqual([]);
+    expect(store.held()).toEqual([]);
   });
 
   test("a PUT longer than the declared size is refused and stores nothing", async () => {
