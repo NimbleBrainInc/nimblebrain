@@ -3,8 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import { buildManagedConnectorRegistry } from "../../src/connectors/providers/registry.ts";
@@ -24,7 +22,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
-import { connectorListListings } from "../helpers/connector-list-catalog.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -117,12 +115,6 @@ interface Harness {
   /** Every event the tool emitted on the runtime's sink, in order. */
   events: EngineEvent[];
   tool: ReturnType<typeof createManageConnectorsTool>;
-  /**
-   * Point Browse at the fixture connector list, converted to the path catalog
-   * an operator mounts. Set just before a Browse read: an install by id with a
-   * listing in place goes through plugin install, which this stub does not carry.
-   */
-  useFixtureListings: () => void;
 }
 
 /** The `connector.grant_changed` payloads emitted so far. */
@@ -158,14 +150,16 @@ async function buildHarness(hostLoopback: string | null = null): Promise<Harness
   // Per-tool allow/deny policies, keyed serverName — the user-scope
   // `connectors[serverName]` block a disconnect must also clear.
   const toolPolicies: Record<string, unknown> = {};
-  let listings = noCatalogListings();
+  const fixture = connectorListPluginRuntime(CONNECTOR_FIXTURE_DIR, {
+    workDir,
+    workspaces: workspaceStore,
+  });
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getEventSink: () => eventSink,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
-    getCatalogListings: () => listings,
+    ...fixture,
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () =>
@@ -210,9 +204,6 @@ async function buildHarness(hostLoopback: string | null = null): Promise<Harness
     toolPolicies,
     events,
     tool: createManageConnectorsTool(ctx),
-    useFixtureListings: () => {
-      listings = connectorListListings(CONNECTOR_FIXTURE_DIR, join(workDir, "browse"));
-    },
   };
 }
 
@@ -621,7 +612,6 @@ describe("manage_connectors.list_directory — personalInstallable per entry", (
   });
 
   test("matches what the personal catalog offers", async () => {
-    h.useFixtureListings();
     const directory = (await h.tool.handler({ action: "list_directory" })).structuredContent as {
       entries: Array<{ id: string; personalInstallable?: boolean }>;
     };
@@ -664,8 +654,6 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
   test("withholds a brokered connector whose provider is unconfigured", async () => {
     delete process.env.COMPOSIO_API_KEY;
     _resetComposioConfigForTest();
-
-    h.useFixtureListings();
     const result = await h.tool.handler({ action: "list_personal_catalog" });
     const ids = (result.structuredContent as { catalog: Array<{ id: string }> }).catalog.map(
       (e) => e.id,
@@ -677,7 +665,6 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
   });
 
   test("offers every DCR and brokered connector by its auth; excludes static", async () => {
-    h.useFixtureListings();
     const result = await h.tool.handler({ action: "list_personal_catalog" });
     expect(result.isError).toBe(false);
     const sc = result.structuredContent as {
@@ -701,7 +688,6 @@ describe("manage_connectors.list_personal_catalog — the curated personal-conne
 
   test("drops connectors already installed on the caller's identity", async () => {
     await h.tool.handler({ action: "install", entry: dcrEntry(), scope: "identity" });
-    h.useFixtureListings();
     const result = await h.tool.handler({ action: "list_personal_catalog" });
     const ids = (result.structuredContent as { catalog: Array<{ id: string }> }).catalog.map(
       (e) => e.id,

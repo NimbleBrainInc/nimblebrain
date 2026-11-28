@@ -69,8 +69,7 @@ mock.module("@composio/core", () => ({
 }));
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
@@ -94,6 +93,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import { stub } from "../helpers/stub.ts";
 import { makeWorkspace, seedWorkspace, seedWorkspaceRoot } from "../helpers/test-workspace.ts";
 
@@ -175,8 +175,7 @@ function buildHarness(): Harness {
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
-    getConnectorCatalog: () => new ConnectorCatalog(catalogPath),
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(catalogPath, { workDir, workspaces: workspaceStore }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,

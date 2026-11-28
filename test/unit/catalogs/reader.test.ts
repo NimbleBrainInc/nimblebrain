@@ -238,3 +238,34 @@ describe("createCatalogListings", () => {
     expect(live.requests).toHaveLength(3);
   });
 });
+
+describe("one connection name is one server across listings", () => {
+  test("a later entry whose server slugifies to an earlier one's connection is dropped and said", async () => {
+    // `a.b/c` and `a/b.c` both take connection `a-b-c`.
+    const first = listingEntry({ name: "first", servers: { s: { name: "a.b/c", auth: "dcr" } } });
+    const same = listingEntry({ name: "same", servers: { s: { name: "a.b/c", auth: "dcr" } } });
+    const clash = listingEntry({ name: "clash", servers: { s: { name: "a/b.c", auth: "dcr" } } });
+    const inner = listingEntry({ name: "inner", servers: { s: { name: "a/b.c", auth: "dcr" } } });
+    const other = listingEntry({ name: "other" });
+    const one = join(dir, "one.json");
+    const two = join(dir, "two.json");
+    writeFileSync(one, listingBytes([first, inner, other]));
+    writeFileSync(two, listingBytes([same, clash]));
+    const listings = createCatalogListings({
+      catalogs: [pathCatalog("one", one), pathCatalog("two", two)],
+      cacheDir: join(dir, "cache"),
+    });
+
+    const [a, b] = await listings.snapshots();
+    // First in configuration, then listing, order keeps it; the same name elsewhere is one server.
+    expect(a?.entries.map((e) => e.address)).toEqual(["first@one", "other@one"]);
+    expect(b?.entries.map((e) => e.address)).toEqual(["same@two"]);
+    expect(a?.diagnostics.map((d) => d.identifier)).toEqual([String(inner.identifier)]);
+    expect(b?.diagnostics.map((d) => d.identifier)).toEqual([String(clash.identifier)]);
+    expect(b?.diagnostics[0]?.message).toContain('"a/b.c" takes connection "a-b-c"');
+    expect(b?.diagnostics[0]?.message).toContain('"a.b/c" (first@one)');
+    // The same objects until a catalog's listing changes.
+    expect(await listings.snapshots()).toEqual([a, b]);
+    expect((await listings.snapshots())[1]).toBe(b);
+  });
+});

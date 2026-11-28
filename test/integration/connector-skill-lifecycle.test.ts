@@ -7,22 +7,17 @@ import { extractText, textContent } from "../../src/engine/content-helpers.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import { runWithRequestContext } from "../../src/runtime/request-context.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { managedSkillRoots, materializeManagedSkill } from "../../src/skills/managed-skills.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { createMockModel } from "../helpers/mock-model.ts";
-import {
-  buildCatalog,
-  OFFLINE_PLUGIN_CATALOG_URL,
-  TEST_CATALOG_URL,
-} from "../helpers/plugin-catalog.ts";
 import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-workspace.ts";
 
 /**
- * Connector-skill binding lifecycle, through the real Runtime — hermetic (a
- * fixture plugin catalog served by an injected fetch, no network):
- *   install (syncBoundSkills) → materialized + loaded as a candidate +
- *   surfaced by list_bound_skills + ABSENT from skills__list →
- *   uninstall (removeBoundSkills) → gone.
+ * Connector-skill lifecycle, through the real Runtime: a plugin's bound skill,
+ * materialized as a plugin install writes it → loaded as a candidate +
+ * surfaced by list_bound_skills + ABSENT from skills__list →
+ * uninstall (removeBoundSkills) → gone.
  *
  * The surface-once-into-history chat behavior is proven at the engine+store
  * level in `connector-skill-binding.test.ts`; this test covers the lifecycle +
@@ -32,8 +27,6 @@ import { provisionTestWorkspace, TEST_WORKSPACE_ID } from "../helpers/test-works
 const testDir = join(tmpdir(), `nimblebrain-connector-skill-lifecycle-${Date.now()}`);
 afterAll(() => {
   if (existsSync(testDir)) rmSync(testDir, { recursive: true, force: true });
-  process.env.NB_PLUGIN_CATALOG_URL = OFFLINE_PLUGIN_CATALOG_URL;
-  delete process.env.NB_PLUGIN_CATALOG_SHA256;
 });
 
 const OVERLAY = `---
@@ -53,22 +46,17 @@ function fixtureModel(): LanguageModelV4 {
   return createMockModel(() => ({ content: [{ type: "text", text: "ok" }] }));
 }
 
-/**
- * A catalog whose `gmail` plugin binds OVERLAY to `com.google/gmail`, and whose
- * `mytool` plugin binds it to `com.test/mytool`; the runtime is pinned to it.
- */
-function fixtureFetch(): typeof fetch {
-  const catalog = buildCatalog([
-    { name: "gmail", servers: { gmail: "com.google/gmail" }, skills: { "gmail-usage": OVERLAY } },
-    {
-      name: "mytool",
-      servers: { gmail: "com.test/mytool" },
-      skills: { "gmail-usage": OVERLAY },
-    },
-  ]);
-  process.env.NB_PLUGIN_CATALOG_URL = TEST_CATALOG_URL;
-  process.env.NB_PLUGIN_CATALOG_SHA256 = catalog.pin;
-  return catalog.fetch;
+/** Materialize OVERLAY as plugin `address`'s skill bound to connection `serverName`. */
+function bindOverlay(runtime: Runtime, address: string, serverName: string): void {
+  const written = materializeManagedSkill({
+    roots: managedSkillRoots(runtime.getWorkDir(), { kind: "workspace", wsId: TEST_WORKSPACE_ID }),
+    address,
+    skill: "gmail-usage",
+    body: OVERLAY,
+    serverName,
+    now: new Date().toISOString(),
+  });
+  expect(written?.name).toBe("gmail-usage");
 }
 
 async function callTool(
@@ -88,7 +76,7 @@ async function callTool(
 }
 
 describe("connector-skill binding lifecycle (runtime wiring)", () => {
-  it("binds at install, loads as a candidate, lists, hides from skills__list, removes on uninstall", async () => {
+  it("a bound skill loads as a candidate, lists, hides from skills__list, removes on uninstall", async () => {
     const workDir = join(testDir, "bind-cycle");
     const runtime = await Runtime.start({
       identityProvider: devProvider,
@@ -100,17 +88,8 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     await provisionTestWorkspace(runtime);
 
     const lifecycle = runtime.getLifecycle();
-    lifecycle.setConnectorSkillFetch(fixtureFetch());
-
-    // --- Install: bind the catalog skill for a Composio gmail connector. ---
-    const lock = await lifecycle.syncBoundSkills(
-      "com.google/gmail",
-      "gmail",
-      TEST_WORKSPACE_ID,
-      runtime.getWorkDir(),
-    );
-    expect(lock).toHaveLength(1);
-    expect(lock[0]!.plugin).toBe("gmail@nimblebrain");
+    // --- Install: the gmail plugin's skill bound to its connection. ---
+    bindOverlay(runtime, "gmail@nimblebrain", "gmail");
 
     // Loaded into the engine candidate pool with the right tool-affinity.
     const candidates = runtime.loadConnectorSkillCandidates(TEST_WORKSPACE_ID);
@@ -189,12 +168,8 @@ describe("connector-skill binding lifecycle (runtime wiring)", () => {
     ]);
     runtime.getRegistryForWorkspace(TEST_WORKSPACE_ID).addSource(source);
 
-    // Bind a curated overlay for server "mytool" (tool-affinity `mytool__*`).
-    runtime.getLifecycle().setConnectorSkillFetch(fixtureFetch());
-    const lock = await runtime
-      .getLifecycle()
-      .syncBoundSkills("com.test/mytool", "mytool", TEST_WORKSPACE_ID, runtime.getWorkDir());
-    expect(lock).toHaveLength(1);
+    // A bound skill for server "mytool" (tool-affinity `mytool__*`).
+    bindOverlay(runtime, "mytool@nimblebrain", "mytool");
 
     const t1 = await runtime.chat({
       identity: DEV_IDENTITY,

@@ -1,47 +1,21 @@
 /**
- * A plugin catalog served from memory, in the shape the NimbleBrain catalog
- * publishes (ADR-0068): a NimbleBrain index kept under its sha256, and one zip
- * per plugin kept under its own. Tests build one, inject its `fetch`, and pin
- * the runtime to its `pin`.
+ * Plugin archive fixtures: the zip writer, the manifest `$schema`, a bound
+ * `SKILL.md`, and the address every test process points the default catalog
+ * at.
  */
 
-import { createHash } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
-import { fakeFetch } from "./fake-fetch.ts";
-
-export const TEST_CATALOG_URL = "https://catalog.test";
 
 /**
- * The plugin catalog every test process starts pointed at (`test/preload.ts`): a
- * local port that refuses, so no test reaches the real catalog by default.
+ * The default catalog's base URL every test process starts pointed at
+ * (`test/preload.ts`): a local port that refuses, so no test reaches the real
+ * catalog by default.
  */
 export const OFFLINE_PLUGIN_CATALOG_URL = "http://127.0.0.1:9";
 
 /** The `$schema` every Agent Plugins 1.0.0 `plugin.json` carries, as the catalog build writes it. */
 export const AGENT_PLUGINS_MANIFEST_SCHEMA =
   "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
-
-export interface FixturePlugin {
-  name: string;
-  /** `extensions["ai.nimblebrain"].servers`: key → registry name. */
-  servers: Record<string, string>;
-  /** Skill folder → SKILL.md text. */
-  skills?: Record<string, string>;
-  /** `extensions["ai.nimblebrain"].conversationStarters`, as written (unvalidated). */
-  conversationStarters?: unknown[];
-}
-
-export interface FixtureCatalog {
-  /** sha256 of the index. */
-  pin: string;
-  /** sha256 of each plugin's archive, by plugin name. */
-  digests: Record<string, string>;
-  /** Every URL the catalog serves, with its bytes. */
-  objects: Map<string, Uint8Array>;
-  /** A fetch over `objects` (404 for anything else) that records each URL it was asked for. */
-  fetch: typeof fetch;
-  requests: string[];
-}
 
 /** A SKILL.md bound to plugin server `server`. */
 export function boundSkill(name: string, server: string, body = `Use ${name} carefully.`): string {
@@ -55,63 +29,6 @@ metadata:
 
 ${body}
 `;
-}
-
-export function sha256(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-export function buildCatalog(
-  plugins: FixturePlugin[],
-  opts: { url?: string; name?: string } = {},
-): FixtureCatalog {
-  const base = opts.url ?? TEST_CATALOG_URL;
-  const objects = new Map<string, Uint8Array>();
-  const digests: Record<string, string> = {};
-  const entries = plugins.map((plugin) => {
-    const files: Record<string, string> = {
-      "plugin.json": JSON.stringify({
-        $schema: AGENT_PLUGINS_MANIFEST_SCHEMA,
-        name: plugin.name,
-        extensions: {
-          "ai.nimblebrain": {
-            servers: plugin.servers,
-            ...(plugin.conversationStarters
-              ? { conversationStarters: plugin.conversationStarters }
-              : {}),
-          },
-        },
-      }),
-    };
-    for (const [skill, text] of Object.entries(plugin.skills ?? {})) {
-      files[`skills/${skill}/SKILL.md`] = text;
-    }
-    const archive = zip(files);
-    const digest = sha256(archive);
-    digests[plugin.name] = digest;
-    const url = `${base}/plugins/${plugin.name}/${digest}.zip`;
-    objects.set(url, archive);
-    return { name: plugin.name, source: { source: "archive", url, sha256: digest } };
-  });
-  const index = new TextEncoder().encode(
-    JSON.stringify({ name: opts.name ?? "nimblebrain", plugins: entries }),
-  );
-  const pin = sha256(index);
-  objects.set(`${base}/nimblebrain/marketplace/${pin}.json`, index);
-
-  const requests: string[] = [];
-  return {
-    pin,
-    digests,
-    objects,
-    requests,
-    fetch: fakeFetch(async (input) => {
-      const url = typeof input === "string" ? input : input.toString();
-      requests.push(url);
-      const body = objects.get(url);
-      return body ? new Response(body, { status: 200 }) : new Response("", { status: 404 });
-    }),
-  };
 }
 
 /** A zip of `files`, deflated, with the plugin root at the top. */

@@ -30,15 +30,30 @@ Scope: `src/catalogs/`. The AI Catalog listings the operator names in `catalogs`
   carry setup: the artifact's record already does. An entry with several servers or a type
   Browse cannot show is logged and left out, and still installs by address.
 - **A listing's bare connectors are the connector list's records** for a connector no plugin
-  record supplies (`listed-records.ts`, read by `ConnectorCatalog` after the owner's records
-  and before the pinned list): verified against `digest`, schema-checked, and one the safety
+  record supplies (`listed-records.ts`, read by `ConnectorCatalog` after the owner's records):
+  verified against `digest`, schema-checked, and one the safety
   scrub refuses kept only for its `adminTools` restriction. An edit to an unpinned listing
-  reaches them at its next read.
+  reaches them at its next read. After them comes a read-only view of the owner's plain
+  connections (`plain-records.ts`): a connection with no `installedBy` whose server exactly one
+  plugin entry names reads the record from that entry's verified artifact when it serves the
+  server at the connection's endpoint (`claims.ts`, adoption's test), fetched on first need and
+  cached by digest. It writes no record and takes no ownership. No list or pin is compiled
+  into the image and no
+  `connectors.yaml` is read at runtime; `src/connectors/catalog/read.ts` reads one only for
+  the converter.
+- **The default catalog is `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json`**, read live,
+  used only when `catalogs` is absent. The variable is its base URL and nothing else, so tests
+  (`test/preload.ts` points it at a refusing port) and dev can aim it without a block.
 - **A path catalog replaces a mounted connector directory.** There is no `curated` catalog,
   no reserved name, and no install from a directory. An operator converts a directory of
   `{servers: [...]}` files with `bun run catalog:convert` and mounts the listing it writes.
 - **Catalogs sit side by side.** The same server from two catalogs is a row under each; there
   is no precedence, dedupe or merge between catalogs.
+- **One connection name is one server.** Two different registry names that slugify to one
+  connection would install into each other's connection, so `snapshots()` drops the entry
+  naming the later one (configuration order, then listing order) with a diagnostic on its
+  snapshot (`refuseConnectionCollisions`). A dropped entry makes its listing not clean, so it is
+  neither "no longer offered" nor removed by the required reconcile.
 - **`entry-extension.ts` (TypeBox) is the source of
   `schemas/catalog-entry-extension/v1/catalog-entry-extension.schema.json`**, which
   `listing.ts` validates against. Edit the TypeBox, run `bun run emit:catalog-entry-extension`;

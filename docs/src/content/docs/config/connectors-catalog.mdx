@@ -101,21 +101,9 @@ Each server becomes one entry named by its server name (`io.acme.support/mcp` is
 
 ## Where the connector list lives
 
-The connector list holds the server records an installed connector reads (its display, host UI, OAuth client setup, `adminTools`) when no plugin record of its owner supplies one, such as a connector installed before plugins were. It reads, first per server name: the owner's installed plugins' records, then every configured listing's [bare connectors](#a-bare-connector), then the pinned list below.
+The connector list holds the server records an installed connector reads (its display, host UI, OAuth client setup, `adminTools`). It reads, first per server name: the owner's installed plugins' records, then every configured listing's [bare connectors](#a-bare-connector), then, for a connector no plugin installed, the record in the one listed plugin that serves its server at the connector's URL (read from that plugin's verified archive, once, and never making the connector the plugin's). Nothing else: the runtime reads no `connectors.yaml` and compiles no list or pin into the image. A connector no record supplies and no listing names reads no catalog record, and keeps working as a plain connector.
 
-**The pinned list: the NimbleBrain plugin catalog's.** The runtime reads the connector list of the catalog at [`NB_PLUGIN_CATALOG_URL`](/config/environment/#connectors-catalog) ([catalog.nimblebrain.ai](https://catalog.nimblebrain.ai)), the same catalog its [connector skills](/using/skills/#connector-skill-overlays) come from. A source checkout, `npx nimblebrain`, and a release image all show the same list.
-
-- **Pinned.** The list is used only when its sha256 is `NB_PLUGIN_CATALOG_CONNECTORS_SHA256`, which each release compiles in. It is asked for at `nimblebrain/connectors/<sha256>.yaml`, a copy a catalog keeps for good, and then at `nimblebrain/connectors.yaml`, the catalog's current build. A list that does not match is refused and logged with both digests.
-- **Cached.** A verified list is kept in the work directory (`cache/plugin-catalog/connectors/<sha256>.yaml`), so a restart needs no network.
-- **Never fatal.** When the pinned list cannot be fetched or does not match, the runtime reads the newest verified list in its cache and logs a warning naming it. With nothing cached, Browse is empty and the startup log says why. A failed fetch is retried on a later read, at most once a minute, so a runtime that started offline fills Browse once the network is back.
-- **Moving forward is bumping the pins.** The list and the index connector skills come from are pinned together; take both from the same catalog build:
-
-  ```bash
-  curl -s https://catalog.nimblebrain.ai/nimblebrain/marketplace.json | sha256sum   # NB_PLUGIN_CATALOG_SHA256
-  curl -s https://catalog.nimblebrain.ai/nimblebrain/connectors.yaml | sha256sum    # NB_PLUGIN_CATALOG_CONNECTORS_SHA256
-  ```
-
-The NimbleBrain catalog's list holds the connectors that install with nothing to configure (`auth: dcr`). To offer your own list, publish a catalog in the same shape and point `NB_PLUGIN_CATALOG_URL` and both pins at it.
+To offer your own connectors, list them in a catalog: publish an AI Catalog, or [convert a connector list](#converting-a-connector-list) into a path catalog, and add it to `catalogs`.
 
 ## Adding a new OAuth connector
 
@@ -616,13 +604,13 @@ Startup fails when a declared client has no `clientId` or no secret. An id the c
 
 Operators upgrading from a release before the `ServerDetail` alignment landed should be aware of these one-time migrations:
 
-- **`NB_CATALOG_PATH`, `NB_STDIO_CATALOG_PATH` and `NB_CURATED_CATALOG_DIR` removed.** Convert the directory of `ServerDetail` YAML / JSON files with `bun run catalog:convert` and mount the listing it writes as a [path catalog](#path-catalogs).
+- **The catalog directory variables removed.** Convert the directory of `ServerDetail` YAML / JSON files with `bun run catalog:convert` and mount the listing it writes as a [path catalog](#path-catalogs).
 - **Catalog id format.** A catalog listing's `id` (and `InstalledConnector.catalogId`) is now the reverse-DNS `ServerDetail.name` (`io.asana/mcp`) instead of a bare slug (`asana`). Catalog-keyed state — `workspace.json#oauthClients[<id>]` and the matching `<clientSecretKey>` credential entries — must be rekeyed to the reverse-DNS form before existing static-auth connectors will resolve. There's no auto-migration; rekey workspace by workspace through the admin Connectors UI.
 - **Connector `serverName` slug.** A catalog install persists a slugified canonical reverse-DNS form (`com-canva-mcp`), and every connector entry carries its `serverName`.
 - **`packages[]`-only entries are not installable.** The runtime does not acquire or spawn a server's code, so a catalog entry advertising only `packages[]` never appears in Browse. Publish the server behind a URL and give the entry a `remotes[]` endpoint.
 
 ## Related
 
-- [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_PLUGIN_CATALOG_URL` and its pins.
+- [Environment Variables](/config/environment/) — `NB_PUBLIC_ORIGIN`, `NB_PLUGIN_CATALOG_URL`.
 - [Workspace JSON](/config/workspace-json/) — `oauthClients`, `connectorsAllowList`.
 - [Credentials](/config/credentials/) — where a connector's credentials live and who can read them.

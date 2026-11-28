@@ -3,8 +3,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import {
   _resetConnectorsConfigForTest,
@@ -36,7 +34,11 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
-import { connectorListListings } from "../helpers/connector-list-catalog.ts";
+import {
+  connectorListCatalog,
+  connectorListListings,
+  connectorListPluginRuntime,
+} from "../helpers/connector-list-catalog.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
@@ -175,8 +177,7 @@ function buildHarness(): Harness {
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(CONNECTOR_FIXTURE_DIR, { workDir, workspaces: workspaceStore }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     // Minimal stubs for the runtime services list_installed touches
@@ -1349,13 +1350,19 @@ describe("manage_connectors.install", () => {
         ],
       }),
     );
-    h.runtime.getConnectorCatalog = () => new ConnectorCatalog(dir);
+    Object.assign(
+      h.runtime,
+      connectorListPluginRuntime(dir, { workDir: h.workDir, workspaces: h.workspaceStore }),
+    );
     const stored = {
       placements: [{ slot: "sidebar.apps", resourceUri: "ui://app/stored", route: "stored" }],
     };
     const reattach = async (url: string) => {
       await h.workspaceStore.update(h.wsId, {
-        connectors: [{ url, serverName: "ai-example-app", ui: stored }],
+        // Made by the plugin install that is now run again.
+        connectors: [
+          { url, serverName: "ai-example-app", ui: stored, installedBy: "ai-example-app@test" },
+        ],
       });
       const result = await buildTool(h, ADMIN_USER).handler({
         action: "install",
@@ -2155,7 +2162,7 @@ async function declareDropboxInstanceClient(): Promise<void> {
     oauthClients: { [DROPBOX_ID]: { clientId: "inst-cid", clientSecret: "inst-sec" } },
   });
   await bindInstanceOAuthClients(() =>
-    new ConnectorCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
+    connectorListCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
   );
 }
 

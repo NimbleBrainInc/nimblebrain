@@ -28,11 +28,13 @@
  *   one it is derived from the source (see {@link deriveCatalogName}).
  *
  * With no block, the instance reads NimbleBrain's catalog at
- * `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json`.
+ * `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json`, live. The variable
+ * names only that default's base URL (`https://catalog.nimblebrain.ai` when
+ * unset), so tests and a dev instance can point it elsewhere without writing a
+ * block; any other catalog is configured here.
  */
 
 import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
-import { resolvePluginCatalogConfig } from "./plugin-catalog.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -60,6 +62,9 @@ export const CATALOG_CONFIG_KEYS = Object.keys({
   name: true,
   refreshMinutes: true,
 } satisfies Record<keyof CatalogConfig, true>);
+
+/** NimbleBrain's catalog, the default's base URL. */
+export const DEFAULT_CATALOG_BASE_URL = "https://catalog.nimblebrain.ai";
 
 /** Where NimbleBrain's catalog serves its AI Catalog, under its base URL. */
 export const AI_CATALOG_WELL_KNOWN_PATH = "/.well-known/ai-catalog.json";
@@ -89,8 +94,10 @@ const NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 /** The catalogs an instance reads when its configuration names none: NimbleBrain's. */
 export function defaultCatalogs(env: Env = process.env): CatalogConfig[] {
-  const { url } = resolvePluginCatalogConfig(env);
-  return [{ source: `${url}${AI_CATALOG_WELL_KNOWN_PATH}`, policy: "available" }];
+  const base = (env.NB_PLUGIN_CATALOG_URL ?? "").trim() || DEFAULT_CATALOG_BASE_URL;
+  return [
+    { source: `${base.replace(/\/+$/, "")}${AI_CATALOG_WELL_KNOWN_PATH}`, policy: "available" },
+  ];
 }
 
 /**

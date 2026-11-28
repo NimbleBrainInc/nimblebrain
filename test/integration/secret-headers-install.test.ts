@@ -24,8 +24,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
@@ -49,6 +47,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { resolveTransportCredential } from "../../src/tools/remote-transport.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
@@ -171,8 +170,7 @@ function toolFor(sessionWsId: string, injected?: ConnectorLifecycleManager) {
     getEventSink: () => new NoopEventSink(),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getConnectorCatalog: () => new ConnectorCatalog(CATALOG_DIR),
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(CATALOG_DIR, { workDir, workspaces: workspaceStore }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),

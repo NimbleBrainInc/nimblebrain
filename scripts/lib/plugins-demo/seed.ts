@@ -21,7 +21,8 @@
 import { join } from "node:path";
 import { createStore } from "../../../packages/conversations/src/store.ts";
 import type { SecretsConfig } from "../../../src/config/secrets.ts";
-import { ConnectorCatalog } from "../../../src/connectors/catalog/catalog.ts";
+import { projectServerDetailToCatalogListing } from "../../../src/connectors/catalog/projection.ts";
+import { readCatalogEntries } from "../../../src/connectors/catalog/read.ts";
 import type { CatalogListing } from "../../../src/connectors/catalog/types.ts";
 import { slugifyServerName } from "../../../src/connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
@@ -79,8 +80,12 @@ export async function seedPluginsDemo(opts: SeedOptions): Promise<SeedSummary> {
   // `McpOAuthRecords` reaches the installed store, as it does inside the runtime.
   setCredentialStore(credentials);
 
-  const entries = await new ConnectorCatalog(opts.catalogDir).listings();
-  const catalog = new Map(entries.map((e) => [e.id, e]));
+  // The demo's connector list, the converter's input: each installable server's listing.
+  const catalog = new Map<string, CatalogListing>();
+  for (const { detail } of readCatalogEntries(opts.catalogDir).entries) {
+    const listing = projectServerDetailToCatalogListing(detail);
+    if (listing && !catalog.has(listing.id)) catalog.set(listing.id, listing);
+  }
 
   await ensureDevUser(opts.workDir);
   const workspaces = new WorkspaceStore(opts.workDir);
@@ -219,6 +224,7 @@ function workspaceRow(plugin: WorkspacePlugin, deps: WorkspaceSeedDeps): Connect
       transport: { type: "streamable-http", auth: { type: "none" } },
       oauthScope: "workspace",
       display: { title: plugin.title },
+      addedBy: "owner",
     };
   }
   const entry = catalogEntry(deps.catalog, plugin.catalogId);
@@ -265,6 +271,7 @@ function mockRow(serverName: string, apiKey: boolean, deps: WorkspaceSeedDeps): 
         }
       : {}),
     display: { title: mock.title, description: mock.description },
+    addedBy: "owner",
   };
 }
 

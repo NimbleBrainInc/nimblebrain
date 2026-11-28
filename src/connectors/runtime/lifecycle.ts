@@ -1,7 +1,5 @@
 import { rmSync } from "node:fs";
-import { join } from "node:path";
 import { oauthClientIdentity } from "../../brand/index.ts";
-import { resolvePluginCatalogConfig } from "../../config/plugin-catalog.ts";
 import type { AccountLookup } from "../../connectors/catalog/account-lookup.ts";
 import type { CatalogEntriesReader } from "../../connectors/catalog/binding.ts";
 import type { ManagedConnectorProvider } from "../../connectors/providers/managed-provider.ts";
@@ -15,10 +13,8 @@ import { IdentityConnectorStore } from "../../identity/connector-store.ts";
 import { mcpAuthCallbackUrl } from "../../oauth/mcp-callback-url.ts";
 import { log } from "../../observability/log.ts";
 import type { PlacementRegistry } from "../../runtime/placement-registry.ts";
-import { resolveServerSkills } from "../../skills/connector-skill-resolver.ts";
 import {
   CONNECTOR_SKILLS_SUBDIR,
-  materializeConnectorSkill,
   removeConnectorSkillsForServer,
 } from "../../skills/connector-skill-store.ts";
 import { personalConnectorWireName } from "../../tools/identity-sources.ts";
@@ -63,13 +59,7 @@ import {
   resolveRefTransport,
   startConnectorSource,
 } from "./startup.ts";
-import type {
-  BrokeredRef,
-  ConnectorInstance,
-  ConnectorRef,
-  ConnectorSkillLockEntry,
-  ConnectorUiMeta,
-} from "./types.ts";
+import type { BrokeredRef, ConnectorInstance, ConnectorRef, ConnectorUiMeta } from "./types.ts";
 
 /**
  * The message a person reads when a connect attempt fails.
@@ -289,13 +279,6 @@ export class ConnectorLifecycleManager {
   private onConnectionRunning: ((wsId: string, serverName: string) => void) | null = null;
 
   /**
-   * Fetch used to read curated connector skills from the plugin catalog. Defaults to
-   * global `fetch`; tests inject a fixture via {@link setConnectorSkillFetch}
-   * so overlay binding stays hermetic (no network).
-   */
-  private connectorSkillFetch: typeof fetch = fetch;
-
-  /**
    * The runtime's resolved work directory (`resolveWorkDir(config)`), wired by
    * Runtime after construction. Connector-skill cleanup on uninstall must use
    * THIS — not `defaultWorkDir()` — so it matches where install
@@ -324,11 +307,6 @@ export class ConnectorLifecycleManager {
     private eventSink: EventSink,
     private allowInsecureRemotes = false,
   ) {}
-
-  /** Inject the fetch used for connector-skill overlay resolution (tests). */
-  setConnectorSkillFetch(fetchImpl: typeof fetch): void {
-    this.connectorSkillFetch = fetchImpl;
-  }
 
   /** Wire the runtime's resolved work directory (called by Runtime after construction). */
   setWorkDir(workDir: string): void {
@@ -462,85 +440,12 @@ export class ConnectorLifecycleManager {
     return this.instances.delete(`${serverName}|${wsId}`);
   }
 
-  // ---- Connector-skill binding -------------------------------------
+  // ---- Connector skills -------------------------------------------
 
   /**
-   * Resolve and materialize the curated skills bound to a connector's server,
-   * from the server's plugin in the pinned catalog (ADR-0068). Called at install
-   * and by the boot reconcile; the returned lock entries are recorded on the
-   * connector's `ConnectorRef.skillsLock` so uninstall can clean up and the
-   * dedupe path knows the connector has an overlay.
-   *
-   * `server` is the connector's registry name (`com.google/gmail`), which the
-   * plugin names; `serverName` is this install's namespace.
-   *
-   * Best-effort and NON-FATAL: a server no plugin binds a skill to, an
-   * unparseable skill, or any fetch/integrity/IO error returns `[]` and never
-   * throws. The connector install must not fail because its optional guidance
-   * couldn't be fetched. The skills materialize into the workspace's
-   * `connector-skills/` store and surface into the conversation only on a
-   * matching tool call.
-   */
-  async syncBoundSkills(
-    server: string,
-    serverName: string,
-    wsId: string,
-    workDir: string,
-  ): Promise<ConnectorSkillLockEntry[]> {
-    try {
-      const config = resolvePluginCatalogConfig();
-      const resolved = await resolveServerSkills(server, {
-        cacheDir: join(workDir, "cache", "plugin-catalog"),
-        catalogUrl: config.url,
-        pin: config.sha256,
-        fetchImpl: this.connectorSkillFetch,
-      });
-      if (resolved.length === 0) return []; // No curated skill for this server — no-op.
-
-      const connectorSkillsDir = new WorkspaceContext({ wsId, workDir }).getDataPath(
-        CONNECTOR_SKILLS_SUBDIR,
-      );
-      const now = new Date().toISOString();
-      const lock: ConnectorSkillLockEntry[] = [];
-      for (const skill of resolved) {
-        const plugin = `${skill.plugin}@${skill.catalog}`;
-        const materialized = materializeConnectorSkill({
-          connectorSkillsDir,
-          serverName,
-          overlayBody: skill.body,
-          source: `plugin:${plugin}:${skill.skill}`,
-          now,
-        });
-        if (!materialized) continue;
-        lock.push({
-          plugin,
-          server,
-          skill: skill.skill,
-          version: config.sha256,
-          digest: skill.digest,
-          sha: skill.sha,
-        });
-      }
-      if (lock.length > 0) {
-        log.debug("mcp", `[connector-skills] bound ${server} → ${serverName} (${wsId})`);
-      }
-      return lock;
-    } catch (err) {
-      // Non-fatal: the connector is installed regardless. Surface the reason so
-      // an operator can see why an expected overlay didn't bind.
-      log.warn(
-        `[connector-skills] failed to bind skills for ${server} (${serverName}): ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return [];
-    }
-  }
-
-  /**
-   * Remove every materialized connector overlay bound to a server. Called
-   * on uninstall; the `ConnectorRef.skillsLock` itself is dropped with the connector
-   * entry. Best-effort — a missing store is a no-op.
+   * Remove every skill materialized for a connection in the owner's
+   * `connector-skills/<serverName>/`. Called on uninstall. Best-effort — a
+   * missing store is a no-op.
    */
   removeBoundSkills(serverName: string, wsId: string, workDir: string): void {
     try {
@@ -599,11 +504,10 @@ export class ConnectorLifecycleManager {
       await this.cleanupConnectorCredentials(instance, serverName);
     }
 
-    // Step 4d — Remove materialized connector-skill overlays. Keyed on
-    // serverName so it cleans up even when the instance was already lost; the
-    // `skillsLock` on the dropped ConnectorRef goes with the config entry above.
+    // Step 4d — Remove the connection's materialized connector skills. Keyed on
+    // serverName so it cleans up even when the instance was already lost.
     // Uses the runtime's resolved workDir (NOT `defaultWorkDir()`) so it
-    // targets the same `connector-skills/` store install/load wrote to under a
+    // targets the same `connector-skills/` store install and load use under a
     // `nimblebrain.json` `workDir`. See `resolvedWorkDir`.
     this.removeBoundSkills(
       serverName,

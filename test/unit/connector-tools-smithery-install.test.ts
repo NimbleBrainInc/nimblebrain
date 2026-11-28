@@ -17,8 +17,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import {
   _resetConnectorsConfigForTest,
@@ -37,6 +35,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -78,9 +77,9 @@ function buildHarness(): Harness {
   const wsId = "ws_0076759dbbe19fcc";
   const workspaceStore = new WorkspaceStore(workDir);
   // The catalog must PUBLISH the entry: a smithery install is permitted only for
-  // a server the operator's own catalog names, so an empty catalog would (now
-  // correctly) reject every install. This mirrors a real deployment pointing
-  // NB_CURATED_CATALOG_DIR at its brokered entries.
+  // a server the operator's own catalog names, so an empty catalog would reject
+  // every install. Read as a path catalog of bare connectors, as a deployment
+  // mounts its brokered entries.
   writeFileSync(
     join(workDir, "catalog.yaml"),
     [
@@ -106,9 +105,10 @@ function buildHarness(): Harness {
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
-    getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "catalog.yaml")),
-    // No catalogs configured: an id only the connector list could hold.
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(join(workDir, "catalog.yaml"), {
+      workDir,
+      workspaces: workspaceStore,
+    }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,

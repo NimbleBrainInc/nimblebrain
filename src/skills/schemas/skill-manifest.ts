@@ -123,10 +123,10 @@ export interface SkillProvenance {
   createdAt?: string;
   updatedAt?: string;
   /**
-   * Upstream source reference for a derived skill. For `connector` overlays
+   * Upstream source reference for a derived skill. For a managed skill
    * this is `plugin:<plugin>@<catalog>:<skill>` (e.g.
    * `plugin:gmail@nimblebrain:gmail`), naming the plugin skill the
-   * materialized copy came from; the connector's `skillsLock` holds its digests.
+   * materialized copy came from; the plugin's installed record holds its digest.
    */
   source?: string;
 }

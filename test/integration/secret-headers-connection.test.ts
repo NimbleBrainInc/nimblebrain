@@ -22,8 +22,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { ConnectorMcpDeps } from "../../src/connectors/runtime/startup.ts";
@@ -45,6 +43,10 @@ import {
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import {
+  connectorListCatalog,
+  connectorListPluginRuntime,
+} from "../helpers/connector-list-catalog.ts";
 import {
   type FakeConnectorServer,
   startFakeConnectorServer,
@@ -155,8 +157,7 @@ function tool() {
     getEventSink: () => new NoopEventSink(),
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(catalogDir, { workDir, workspaces: workspaceStore }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () => stub<PermissionStore>({ deleteConnector: async () => {} }),
@@ -188,7 +189,7 @@ beforeEach(async () => {
   lifecycle.setConnectorMcpDepsFactory(connectorMcpDeps);
   // What `Runtime.start` wires: a minted connector's credential settings come
   // from the catalog at every start, so recovery reads the same catalog.
-  lifecycle.setCatalogReader(() => new ConnectorCatalog(catalogDir).catalogEntries());
+  lifecycle.setCatalogReader(() => connectorListCatalog(catalogDir).catalogEntries());
   workspaceRegistry = new ToolRegistry();
   // What `Runtime.start` binds — `tryRecoverSource` and the eager start both
   // reach the workspace's registry through it.

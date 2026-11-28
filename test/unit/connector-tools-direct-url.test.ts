@@ -19,7 +19,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import {
   _resetHostLoopbackForTest,
@@ -43,6 +42,7 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import type { ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { connectorListCatalog } from "../helpers/connector-list-catalog.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import { fakeFetch } from "../helpers/fake-fetch.ts";
 import { stub } from "../helpers/stub.ts";
@@ -108,7 +108,7 @@ function buildHarness(hostLoopback: string | null): Harness {
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
-    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
+    getConnectorCatalog: () => connectorListCatalog(CONNECTOR_FIXTURE_DIR),
     // No catalogs configured: an id only the connector list could hold.
     getCatalogListings: () => noCatalogListings(),
     getLifecycle: () => lifecycle,
@@ -299,6 +299,7 @@ describe("an install with a card", () => {
         description: "Forecasts, in development",
         iconUrl: "data:image/svg+xml;base64,PHN2Zy8+",
       },
+      addedBy: "owner",
     });
     const raw = JSON.stringify(row);
     for (const grant of ["hooks", "adminTools", "recordArguments", "notifications"]) {

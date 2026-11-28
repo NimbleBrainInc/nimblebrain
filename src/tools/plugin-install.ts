@@ -236,6 +236,7 @@ async function connectAll(
         alreadyInstalled: sc.alreadyInstalled === true,
         reconnected: sc.reconnected === true,
         ...(typeof sc.warning === "string" ? { warning: sc.warning } : {}),
+        ...(typeof sc.notice === "string" ? { notice: sc.notice } : {}),
       });
     }
     return { connected };
@@ -248,6 +249,8 @@ interface Connected {
   /** An update moved it to new connection settings; it signs in again. */
   reconnected: boolean;
   warning?: string;
+  /** The connector's own words about what is now happening (its `on_ready`). */
+  notice?: string;
 }
 
 const lifecycles = keyedChain();
@@ -393,15 +396,15 @@ function installedResult(
   owner: PluginOwner,
   address: string,
   digest: string,
-  connected: Array<{ serverName: string; warning?: string }>,
+  connected: Array<{ serverName: string; warning?: string; notice?: string }>,
   skills: InstalledPluginSkill[],
   alreadyInstalled: boolean,
 ): ToolResult {
   const serverNames = connected.map((c) => c.serverName);
-  const warning = connected
-    .map((c) => c.warning)
-    .filter(Boolean)
-    .join(" ");
+  const joined = (pick: (c: (typeof connected)[number]) => string | undefined) =>
+    connected.map(pick).filter(Boolean).join(" ");
+  const warning = joined((c) => c.warning);
+  const notice = joined((c) => c.notice);
   const what = [
     serverNames.length > 0 ? `${serverNames.length} connector(s)` : "",
     skills.length > 0 ? `${skills.length} skill(s)` : "",
@@ -411,7 +414,7 @@ function installedResult(
   const connect = serverNames.length > 0 ? " Connect it to authenticate." : "";
   return {
     content: textContent(
-      `${alreadyInstalled ? "Already installed" : "Installed"} ${address}${what ? ` (${what})` : ""}.${connect}${warning ? ` ${warning}` : ""}`,
+      `${alreadyInstalled ? "Already installed" : "Installed"} ${address}${what ? ` (${what})` : ""}.${connect}${notice ? ` ${notice}` : ""}${warning ? ` ${warning}` : ""}`,
     ),
     structuredContent: {
       ok: true,
@@ -423,6 +426,7 @@ function installedResult(
       digest,
       ...ownerFields(owner),
       ...(warning ? { warning } : {}),
+      ...(notice ? { notice } : {}),
     },
     isError: false,
   };
@@ -434,9 +438,10 @@ async function releaseConnections(
   owner: PluginOwner,
   names: string[],
   others: InstalledPluginRecord[],
-): Promise<{ removed: string[]; kept: string[] } | ToolResult> {
+): Promise<{ removed: string[]; kept: string[]; reports: ToolResult[] } | ToolResult> {
   const removed: string[] = [];
   const kept: string[] = [];
+  const reports: ToolResult[] = [];
   for (const name of names) {
     const serverName = connectionOf({ name });
     if (others.some((r) => r.connectors.some((c) => c.name === name))) {
@@ -448,8 +453,41 @@ async function releaseConnections(
     const result = await ctx.ops.disconnect(owner, serverName);
     if (result.isError) return result;
     removed.push(serverName);
+    reports.push(result);
   }
-  return { removed, kept };
+  return { removed, kept, reports };
+}
+
+/** The fields every connection removal reports about itself, not about what it removed. */
+const REMOVAL_IDENTITY_FIELDS = new Set(["ok", "scope", "serverName", "wsId"]);
+
+/**
+ * What removing each connection reported, merged into one: the secrets it
+ * deleted, failed to delete or kept, and the grants it revoked, which the
+ * uninstall notice reads. Lists are joined, counts summed, anything else is
+ * the first removal's.
+ */
+function removalReport(reports: readonly ToolResult[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const report of reports) {
+    for (const [key, value] of Object.entries(report.structuredContent ?? {})) {
+      if (!REMOVAL_IDENTITY_FIELDS.has(key)) out[key] = mergeField(out[key], value, key in out);
+    }
+  }
+  return out;
+}
+
+function mergeField(prior: unknown, value: unknown, present: boolean): unknown {
+  if (Array.isArray(value)) return [...(Array.isArray(prior) ? prior : []), ...value];
+  if (typeof value === "number") return (typeof prior === "number" ? prior : 0) + value;
+  return present ? prior : value;
+}
+
+function reportText(report: ToolResult): string {
+  return report.content
+    .map((c) => (c.type === "text" ? c.text : ""))
+    .filter(Boolean)
+    .join(" ");
 }
 
 /**
@@ -495,13 +533,14 @@ async function uninstallPluginNow(
   if ("isError" in released) return released;
   await store.remove(owner, address);
 
-  const parts = [`Uninstalled ${address}.`];
+  const parts = [`Uninstalled ${address}.`, ...released.reports.map(reportText)];
   if (released.kept.length > 0) {
     parts.push(`Kept ${released.kept.join(", ")}: another installed plugin uses it.`);
   }
   return {
-    content: textContent(parts.join(" ")),
+    content: textContent(parts.filter(Boolean).join(" ")),
     structuredContent: {
+      ...removalReport(released.reports),
       ok: true,
       address,
       removedConnectors: released.removed,

@@ -11,7 +11,7 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `extensions["ai.nimblebrain"]`, so the directory installs unchanged on other hosts.
 - **`manifest.ts` is the one reader of `plugin.json` and the extension.** Code that needs a
   manifest field calls it; never parse `extensions["ai.nimblebrain"]` anywhere else
-  (`src/skills/connector-skill-resolver.ts` reads its catalog plugins through it).
+  (`src/plugins/installed/artifact.ts` reads an installed artifact through it).
   - `parsePluginManifest` is strict, for a plugin the operator configured: the format's
     schemas (vendored in `schemas/` here, never fetched), the format's prose rules
     (one-token `command`, `cwd` inside its root, HTTPS off loopback, `${PLUGIN_ROOT}` /
@@ -65,8 +65,9 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   created is reused and a skill file rewritten in place, so a stopped install finishes on the
   next one. Uninstall removes what the record lists (a connection another record names stays),
   then the record.
-- **A connection a plugin creates carries `installedBy` (its address); one without it is the
-  owner's.** Install reuses a connection only when it carries `installedBy` and either this
+- **A connection a plugin creates carries `installedBy` (its address); one its owner adds carries
+  `addedBy: "owner"`, stamped by every owner path (`direct-url` install, `manage_workspaces`
+  create and update rows).** One with neither predates both marks and is the owner's too. Install reuses a connection only when it carries `installedBy` and either this
   plugin made it or an installed record names it; anything else is refused, whatever its URL.
   Uninstall never removes a connection without it. Never infer provenance from a URL.
 - **One install, uninstall or update per owner at a time** (`oneAtATime` in
@@ -84,14 +85,21 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   connection is left alone (its endpoint is the broker's session). A connection another plugin supplies is not changed.
 - **Existing installs are adopted at boot, before any connector starts** (`src/tools/plugin-adopt.ts`,
   called from `Runtime.start` through `adoptExistingInstalls`, under the owner's lifecycle lock). A
-  connector qualifies only when its `skillsLock` records a plugin and server, it carries no
-  `installedBy` and no `display`, no record names it, exactly one listing entry names its server,
-  and that entry's verified artifact contains it; every catalog must have a readable listing, or
+  connector qualifies only when it carries no `installedBy` and no `addedBy: "owner"`, carries
+  positive evidence of a catalog install (`catalogEvidence`: a `skillsLock` naming a plugin and
+  server, a broker's stamp, an `oauthClient`, or provider auth; fields only the catalog install
+  path wrote, never an owner path), no record names it, exactly one listing entry names its server (by its lock's or its broker's
+  recorded name, else by a name that slugifies to its connection), and that entry's verified
+  artifact carries the server at the connector's endpoint (the same remote URL, or for a brokered
+  connector the name its broker stamped); every catalog must have a readable listing, or
   adoption waits for the next boot. It writes the managed skills (a bound one in place of the old
   binding's file, whatever else the old binding left removed), then the record, then
-  `installedBy` with the lock dropped. Anything else is left exactly as it is and logged with its
-  claimants. A record that names a connector still carrying its lock is an adoption that stopped,
-  and is finished with no fetch. Artifacts are fetched only for connectors being adopted, a few at
+  `installedBy` with the lock dropped. Anything else stays a plain connector, logged with its
+  claimants: its lock stays as provenance for a later boot, and the skill files its old binding
+  materialized are removed, so it carries no catalog skill (nothing else would ever update them),
+  unless a committed record names it. A record that names a connector not yet marked is an
+  adoption that stopped: it is marked with no fetch, and a skill the record lists that is missing
+  is written again from the artifact at the record's digest. Artifacts are fetched only for connectors being adopted, a few at
   a time and a bounded number per boot.
 - **Required items are kept by the kernel** (`src/tools/plugin-required.ts`, run by
   `Runtime.reconcileRequiredPlugins` at boot, on `WorkspaceStore.onCreated`, and on an interval).
@@ -111,15 +119,18 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   record as one plugin over its connections, and a connector no record names as a plugin of its own.
   Neither opens an archive. A connection's overlay (the published `skill://` guidance it supersedes)
   is read from the record's bound skills too.
-- **The zip-scanning resolver is for connectors with no record only** (until ADR-0077 step 5
-  deletes it): `syncBoundSkills` at a workspace install by catalog id that is not a plugin install
-  (`handleInstallRemoteOAuth` with `bindSkills` left on), and the boot reconcile
-  (`connector-skill-reconcile.ts`), which skips a connection with `installedBy`.
+- **Every install from a catalog is a plugin install.** `install` takes an `address`; an entry
+  with only an id installs the one listing entry that names its server (`NOT_IN_CATALOG` for none,
+  `AMBIGUOUS` for two). Only `direct-url`, on a local install, connects anything else. Nothing
+  writes `ConnectorRef.skillsLock`; adoption is its only reader.
+- **Plugin uninstall and install carry what the connection reported.** Uninstall merges each
+  removed connection's report (`deletedSecretKeys`, `failedSecretKeys`, `retainedSecretKeys`,
+  `revokedWorkspaces`, ...) into its result, and install carries each connection's `notice` and
+  `warning`, because the shell's dialogs read those fields.
 - **A plugin's skills are managed** (`src/skills/managed-skills.ts`): a bound one in the owner's
   `connector-skills/<serverName>/`, any other in `plugin-skills/<address>/`, each marked by
   provenance `plugin:<address>:<skill>`. The skill tools refuse to write any file in either
-  store and offer `skills__copy`. Never run the connector-skill resolver for a plugin install
-  (`bindSkills: false`).
+  store and offer `skills__copy`.
 
 ## Defaults ship in the box
 

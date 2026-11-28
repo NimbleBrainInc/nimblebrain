@@ -4,8 +4,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import type { HookReconcileDeps } from "../../src/hooks/reconcile.ts";
@@ -33,6 +31,7 @@ import type { Tool, ToolResult } from "../../src/tools/types.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
@@ -182,8 +181,7 @@ async function buildHarness(
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(CONNECTOR_FIXTURE_DIR, { workDir, workspaces: workspaceStore }),
     getLifecycle: () =>
       stub<ConnectorLifecycleManager>({
         ...lifecycle,
@@ -191,8 +189,6 @@ async function buildHarness(
         getInstances: lifecycle.getInstances.bind(lifecycle),
         seedInstance: lifecycle.seedInstance.bind(lifecycle),
         notifyInstalled: lifecycle.notifyInstalled.bind(lifecycle),
-        syncBoundSkills: lifecycle.syncBoundSkills.bind(lifecycle),
-        setConnectorSkillFetch: lifecycle.setConnectorSkillFetch.bind(lifecycle),
         // Wrapped so the ORDER of the notification and the teardown is
         // observable. "Before teardown" is the whole contract: after it there is
         // no source to call.
