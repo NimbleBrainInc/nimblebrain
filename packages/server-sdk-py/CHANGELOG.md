@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `host_context(ctx)` reads the host context a call carries (`params._meta["ai.nimblebrain/context"]`) as a `HostContext`: the principal, workspace, owner, conversation, run, grant, `unattended` and the host's `now`. It accepts exactly what the `host-context/v1` schema accepts and reads anything else as `None`. `read_host_context(meta)`, `is_host`, `Principal` and `HOST_CONTEXT_META_KEY` come with it. See [Host context](https://docs.nimblebrain.ai/server-sdk/host-context/).
+
 ## [0.9.1]
 
 ### Fixed

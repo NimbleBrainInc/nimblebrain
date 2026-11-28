@@ -151,4 +151,5 @@ outlive the run (authoring or starting more runs) is `refused`. A private tool i
   place for the context is a new major beside this one.
 - A reader in any language is checked against the schema: every context the schema accepts it
   reads, and every value the schema refuses it reads as no context. The TypeScript reader is
-  `packages/server-sdk`; its tests hold it to the schema with the same fixtures.
+  `packages/server-sdk` and the Python reader `packages/server-sdk-py`; their tests hold each
+  to the schema with the same fixtures.

@@ -220,6 +220,7 @@ export default defineConfig({
                     label: 'Guides',
                     items: [
                       { label: 'Tools and annotations', slug: 'server-sdk/tools' },
+                      { label: 'Host context', slug: 'server-sdk/host-context' },
                       { label: 'Announcing changes', slug: 'server-sdk/announcing-changes' },
                       { label: 'Skills', slug: 'server-sdk/skills' },
                       { label: 'Facets', slug: 'server-sdk/facets' },

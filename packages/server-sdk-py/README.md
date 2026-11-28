@@ -158,6 +158,7 @@ uv run pytest
 | Feature | Names | Guide |
 | --- | --- | --- |
 | Tool annotations | `READS`, `ADDS`, `CHANGES` | [Tools and annotations](https://docs.nimblebrain.ai/server-sdk/tools/) |
+| The host context | `host_context`, `HostContext`, `is_host` | [Host context](https://docs.nimblebrain.ai/server-sdk/host-context/) |
 | Change announcements | `announce_resource_list_changed` | [Announcing changes](https://docs.nimblebrain.ai/server-sdk/announcing-changes/) |
 | Skills | `add_skills`, `SkillDefinition` | [Skills](https://docs.nimblebrain.ai/server-sdk/skills/) |
 | Facets | `facet_meta`, `facet_count` | [Facets](https://docs.nimblebrain.ai/server-sdk/facets/) |

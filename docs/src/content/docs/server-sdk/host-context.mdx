@@ -1,0 +1,71 @@
+---
+title: Host context
+description: Read who is calling, the workspace a call is walled to and the host's clock from a Python MCP server with host_context(ctx).
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import journal from '@sdk-examples/journal.py?raw';
+import testJournal from '@sdk-examples/test_journal.py?raw';
+
+A NimbleBrain host stamps a context on every request it sends to a plugin server, at `params._meta["ai.nimblebrain/context"]`: who is calling (the principal), the scope the call is walled to, and the host's clock when it sent the call. The host sets it last and overwrites any value a caller supplied, so no caller can claim to be the host. `host_context(ctx)` reads it in a tool and returns a `HostContext`, or `None` when the call carries none.
+
+<Aside type="caution" title="Reading is not trusting">
+Believe the context only from an authenticated host transport: stdio, which the host alone holds, or HTTP with the credential the operator issued to the host for that server. On any other connection, refuse the request before a tool runs and never read its `_meta`.
+</Aside>
+
+## A server walled by the context
+
+<Code code={journal} lang="python" title="journal.py" />
+
+- **Wall every read and write by the context's workspace.** A tool argument or a request body never names it.
+- **Take `now` from the context** for a decision on the call's instant, never the server's own clock. It is the RFC 3339 string the host wrote; parse it with `datetime.fromisoformat` when you need a `datetime`.
+- **Refuse a private tool to anyone but the host.** `is_host` is true only for `principal == "host"`. A call with no context names no principal, so it is not the host.
+
+## The fields
+
+| Attribute | Wire field | Meaning |
+|---|---|---|
+| `principal` | `principal` | `"host"`, the host's own code, or `"person"`, a user directly or through an agent or an app |
+| `workspace_id` | `workspaceId` | The workspace the call is walled to |
+| `owner_id` | `ownerId` | The verified identity whose records the call reads and writes |
+| `conversation_id` | `conversationId` | The conversation the call is made inside, during a chat turn |
+| `run_id` | `runId` | The unattended run the call is made inside, or that a host call is made for |
+| `grant` | `grant` | The run grant, on a person's call to a tool its contract marks `grant: true`. Opaque: store it and return it verbatim. It is left out of the `repr` |
+| `unattended` | `unattended` | `True` when the call is made inside an unattended run, with no person present |
+| `now` | `now` | The host's clock when it sent the request, in UTC (`Z`) |
+
+Every attribute but `principal` is `None` when the host did not stamp it. The host leaves out a dimension it cannot verify; it never guesses one.
+
+## What counts as no context
+
+The reader accepts exactly what the published schema, [`host-context/v1`](https://schemas.nimblebrain.ai/host-context/v1/host-context.schema.json), accepts. Anything else reads as `None`:
+
+- no `ai.nimblebrain/context` key, or a value that is not an object;
+- no `principal`, or one other than `host` or `person`;
+- a known field of the wrong type or form: an empty or non-string id, an empty grant or one over 4,096 characters, a non-boolean `unattended`, or a `now` that is not a UTC instant (`2026-01-01T12:00:00Z`, up to nine fractional digits).
+
+One malformed field makes the whole context `None`, never a context with that field dropped. Fields the schema does not name are ignored, since version 1 only adds optional fields.
+
+## The API
+
+```python
+from nimblebrain_server_sdk import HOST_CONTEXT_META_KEY, host_context, is_host, read_host_context
+
+context = host_context(ctx)            # in a FastMCP tool: HostContext | None
+is_host(context)                       # False for None, and for a person
+read_host_context(meta)                # the same rules over a request's raw `_meta` mapping
+```
+
+`read_host_context` takes a plain mapping, so a server on another MCP library reads the context the same way.
+
+## Test it
+
+The in-memory `fastmcp.Client` sends whatever `_meta` a test gives `call_tool`, so a test stamps the context the way the host does.
+
+<Code code={testJournal} lang="python" title="test_journal.py" />
+
+## Related
+
+- [Reserved keys](/extensions/reserved-keys/): every `_meta` key the host reads or sets
+- [Errors](/server-sdk/errors/)
+- [API reference](/server-sdk/reference/core/)
