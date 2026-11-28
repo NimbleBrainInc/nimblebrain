@@ -210,9 +210,45 @@ describe("execute (tools/call) — unified recovery", () => {
     }
   });
 
-  // Transport-shaped fixtures, deliberately. A plain `new Error("Session not
-  // found")` or an `McpError` would be server-authored text, which must NOT earn
-  // the marker — see the negative table below. Each of these is a throw the
+  for (const message of [
+    "Rate limit exceeded for this account",
+    "Session not found in my application db",
+    "Service Unavailable from upstream vendor",
+  ]) {
+    it(`does not mark a server-authored task-creation error: ${message}`, async () => {
+      const source = remoteSource({});
+      const internal = mcpSourceInternals(source);
+      internal.protocolEra = "modern";
+      internal.client.getServerCapabilities = () => ({ extensions: { [TASKS_EXTENSION_ID]: {} } });
+      internal.cachedTools = [
+        {
+          name: "svc__long_job",
+          description: "",
+          inputSchema: { type: "object" },
+          source: "mcp:svc",
+        },
+      ];
+      internal.taskClient = stub<TaskClient>({
+        callToolStream: async function* () {
+          yield { type: "error", error: { message } };
+        },
+      });
+      const restart = spyRestart(source, false);
+      try {
+        const result = await source.execute("long_job", {});
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.content)).toContain(message);
+        expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+        expect(restart).not.toHaveBeenCalled();
+      } finally {
+        restart.mockRestore();
+      }
+    });
+  }
+
+  // Transport-shaped fixtures, deliberately. A `ProtocolError` or task-stream
+  // response carries server-authored text and must NOT earn the marker — see
+  // the negative cases above and below. Each of these is a throw the
   // transport itself builds: an HTTP status, or a socket failure.
   const INFRA_CLASSES: ReadonlyArray<[string, () => unknown]> = [
     [

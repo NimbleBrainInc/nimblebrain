@@ -379,6 +379,9 @@ interface RecoveryShape<T> {
   miss?: (err: unknown) => T;
 }
 
+/** A task-creation error the connector answered, not a transport failure. */
+class TaskCreationRejectedError extends Error {}
+
 /**
  * Sanitize an untrusted `serverInfo.version` before we store or surface it. The
  * string comes from the MCP server — a Composio gateway or a third-party OAuth
@@ -2514,29 +2517,29 @@ export class McpSource implements ToolSource {
           // toward its strike budget — see `INFRA_ERROR_META_KEY` for why that
           // matters and why the marker is host-owned.
           //
-          // It requires an allowlisted class AND that the throw is not an
-          // `ProtocolError`. That second condition is stated as what it is — a
-          // denylist of one type, not a proof of transport origin.
+          // It requires an allowlisted class AND excludes known server-authored
+          // errors: protocol answers and task-creation responses. This is a
+          // denylist of known origins, not proof of transport origin.
           //
           // It is load-bearing because three of the allowlisted classes are
           // decided by regex over the server's own error text: a connector answering
           // `ProtocolError(-32603, "Rate limit exceeded")` — FastMCP's default for an
           // unhandled exception — would otherwise exempt itself from the guard
           // permanently, and a connector relaying a persistent upstream 429 would be
-          // exempted exactly when the guard should trip. An `ProtocolError` IS the
+          // exempted exactly when the guard should trip. A `ProtocolError` IS the
           // server answering, so it never earns the marker.
           //
-          // Residual, deliberately accepted: a bare `Error` is not proof of
-          // transport origin. `startToolAsTask` re-throws a task-creation failure
-          // as `new Error(serverMessage)`, which this admits (#838). An allowlist
-          // over throw TYPES would be worse, not better — `fetch failed` arrives
-          // as a plain TypeError and a reset socket as a generic Error, so it
-          // would drop exactly the cases this exists to mark.
+          // A bare Error is not proof of transport origin. Task creation keeps
+          // its server-authored message for recovery classification, but carries
+          // a distinct type so it cannot earn the infrastructure exemption.
+          // An allowlist over throw types would drop transport errors that arrive
+          // as a plain TypeError or generic Error.
           const kind = classifyConnectionFailure(e);
           const infra =
             INFRA_FAILURE_CLASSES.has(kind) &&
             !(e instanceof ProtocolError) &&
-            !(e instanceof TaskWireError)
+            !(e instanceof TaskWireError) &&
+            !(e instanceof TaskCreationRejectedError)
               ? infraErrorMeta()
               : {};
           if (kind === "rate-limited") {
@@ -3167,7 +3170,7 @@ export class McpSource implements ToolSource {
     }
     const firstMsg: TaskStreamMessage = first.value;
     if (firstMsg.type === "error") {
-      throw new Error(
+      throw new TaskCreationRejectedError(
         firstMsg.error?.message ?? `Task creation failed for ${this.name}:${toolName}`,
       );
     }
@@ -3797,9 +3800,9 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
   //    `code = response.status`, so a refused POST and a refused mid-stream SSE
   //    reopen both arrive carrying a real numeric 429.
   //  - the MESSAGE catches the paths where that code is already gone.
-  //    `startToolAsTask` re-throws a task-creation failure as a bare
-  //    `new Error(firstMsg.error?.message)`, keeping the server's text and
-  //    dropping everything else. Heterogeneous remotes are the second reason —
+  //    `startToolAsTask` re-throws a task-creation failure as a
+  //    `TaskCreationRejectedError` with the server's text, keeping its message
+  //    classification. Heterogeneous remotes are the second reason —
   //    the same one that makes session-lost match on text.
   //
   // The `rate limit` stem is deliberately left unanchored: `rate_limit_exceeded`
