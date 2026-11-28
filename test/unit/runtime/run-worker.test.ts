@@ -131,6 +131,7 @@ function harness(
     limitsOf: () => ({ maxIterations: 5, maxRunDurationMs: 600_000 }),
     isMember: opts.isMember ?? (async () => true),
     workspaceIds: async () => [WS],
+    onWorkspaceCreated: () => () => {},
     deliver: () => {},
     ended: () => {},
     metered: () => undefined,

@@ -1757,6 +1757,7 @@ export class Runtime {
         effectiveRunLimits(limits ?? {}, this.getRunsConfig(), this.getMaxIterations()),
       isMember: (wsId, ownerId) => this.isPrincipalWorkspaceMember(wsId, ownerId),
       workspaceIds: async () => (await this._workspaceStore.list()).map((ws) => ws.id),
+      onWorkspaceCreated: (listener) => this._workspaceStore.onCreated((ws) => listener(ws.id)),
       deliver: (wsId, notices) => this.deliverContractNotices(TASKS_CONTRACT, wsId, notices),
       ended: (wsId, ownerId, run) => {
         const name = CONTRACT_SOURCE_NAMES.get(TASKS_CONTRACT);
@@ -4875,8 +4876,9 @@ export class Runtime {
       this._systemSource,
       this.defaultEvents,
     );
-    // A workspace reached for the first time is served by the run worker now
-    // rather than at its next interval.
+    // The run worker serves every workspace from boot and from its creation; a
+    // record that appeared without the store's create (written to the volume
+    // directly) is served from its first reach rather than at the next interval.
     this._runWorker?.serve(wsId);
     // Wire permission context so the registry can gate disallowed tools
     // before they reach the source.execute() path.
