@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectorCatalog } from "../../../src/connectors/catalog/catalog.ts";
 import {
   _resetConnectorsConfigForTest,
   setConnectorsConfig,
@@ -16,6 +15,7 @@ import type { ConnectorRef } from "../../../src/connectors/runtime/types.ts";
 import { mcpOAuthKey } from "../../../src/tools/mcp-oauth-records.ts";
 import { WorkspaceContext } from "../../../src/workspace/context.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../../helpers/connector-fixtures.ts";
+import { connectorListCatalog } from "../../helpers/connector-list-catalog.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -107,7 +107,7 @@ describe("buildUrlOAuthProvider — personal connector with an instance OAuth cl
       oauthClients: { [DROPBOX_ID]: { clientId: "cid", clientSecret: "sec" } },
     });
     await bindInstanceOAuthClients(() =>
-      new ConnectorCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
+      connectorListCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
     );
     const workDir = mkdtempSync(join(tmpdir(), "nb-buop-instance-"));
     installTestCredentialStore(workDir);

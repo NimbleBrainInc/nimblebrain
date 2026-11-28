@@ -30,7 +30,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
 
 // ── @composio/core mock (hoisted) ───────────────────────────────────
 //
@@ -94,7 +93,6 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 // the mocks resolve first even though they appear textually above —
 // keeping the order explicit makes the precondition obvious to a
 // future reader.
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
 import {
   composioConnectorDir,
@@ -119,6 +117,7 @@ import {
 } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -177,9 +176,9 @@ function buildHarness(): Harness {
   const workspaceStore = new WorkspaceStore(workDir);
 
   // The catalog must PUBLISH the entry: a brokered install is permitted only
-  // for a connector the operator's own catalog names, so an empty catalog now
-  // (correctly) rejects every one. Mirrors a real deployment pointing
-  // NB_CURATED_CATALOG_DIR at its brokered entries.
+  // for a connector the operator's own catalog names, so an empty catalog
+  // rejects every one. Read as a path catalog of bare connectors, as a
+  // deployment mounts its brokered entries.
   writeFileSync(
     join(workDir, "empty-catalog.yaml"),
     [
@@ -222,9 +221,10 @@ function buildHarness(): Harness {
     getWorkDir: () => workDir,
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
-    getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "empty-catalog.yaml")),
-    // No catalogs configured: an id only the connector list could hold.
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(join(workDir, "empty-catalog.yaml"), {
+      workDir,
+      workspaces: workspaceStore,
+    }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,
@@ -486,41 +486,6 @@ describe("manage_connectors.install (composio-auth)", () => {
     expect(ws?.connectors ?? []).toHaveLength(0);
   });
 
-  // Curated skills bind by the server's registry name, looked up in the pinned
-  // catalog. A `composio` block on a non-composio entry is caller input all the
-  // way through (`parseCatalogListing` strips no unknown install fields), and it
-  // must not choose what is read.
-  test("(e-5) a forged composio block on a dcr install does not steer the skill lookup", async () => {
-    const identities: string[] = [];
-    const lifecycle = h.runtime.getLifecycle();
-    const realSync = lifecycle.syncBoundSkills.bind(lifecycle);
-    lifecycle.syncBoundSkills = async (...args: Parameters<typeof realSync>) => {
-      identities.push(args[0]);
-      return realSync(...args);
-    };
-
-    try {
-      const forged = {
-        id: DCR_ID,
-        name: "DCR",
-        description: "A catalog DCR entry with a forged composio block",
-        install: {
-          kind: "remote-oauth",
-          url: "https://dcr.example.test/mcp",
-          auth: "dcr",
-          composio: { toolkit: "../../../evil-org/evil-repo/main/payload" },
-        },
-      };
-
-      await buildTool(h).handler({ action: "install", entry: forged, wsId: h.wsId });
-
-      // The entry's registry name, as for every connector; the toolkit plays no part.
-      expect(identities).toEqual([DCR_ID]);
-    } finally {
-      lifecycle.syncBoundSkills = realSync;
-    }
-  });
-
   test("(e-4) a forged composio block is replaced by the catalog's", async () => {
     process.env.COMPOSIO_API_KEY = "k_test";
     setConnectorsConfig({
@@ -555,6 +520,8 @@ describe("manage_connectors.install (composio-auth)", () => {
       transport: { type: "streamable-http" },
       oauthScope: "workspace",
       brokered: { provider: "composio", connectorId: GMAIL_ID },
+      // Made by the plugin install that is now run again.
+      installedBy: "com-google-gmail@test",
     };
     await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 
@@ -625,6 +592,7 @@ describe("manage_connectors.install (composio-auth)", () => {
       oauthScope: "workspace",
       brokered: { provider: "composio", connectorId: GMAIL_ID },
       ui: { placements: [] },
+      installedBy: "com-google-gmail@test",
     };
     await h.workspaceStore.update(h.wsId, { connectors: [orphanRef] });
 

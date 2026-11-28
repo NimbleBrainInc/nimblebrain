@@ -9,8 +9,8 @@
  * only when all three hold:
  *
  * 1. it carries catalog provenance: its `skillsLock` records a plugin and the
- *    server it was bound to (the zip-scanning resolver wrote both at a catalog
- *    install), it carries no `installedBy`, and no record of its owner names it.
+ *    server it was bound to (a catalog install wrote both before records
+ *    existed; nothing writes a lock now), it carries no `installedBy`, and no record of its owner names it.
  *    A connector its owner added by URL carries no lock (and a `display`), so it
  *    is never adopted, whatever a listing names;
  * 2. exactly one entry across the configured listings names that server in its
@@ -21,7 +21,10 @@
  *    the server.
  *
  * Otherwise the connector stays a plain connector and the reconcile logs the
- * entries that claim it, once per boot.
+ * entries that claim it, once per boot. A plain connector carries no catalog
+ * skill: the files its old binding materialized in `connector-skills/` are
+ * removed, and its `skillsLock` stays as provenance, so a later boot whose
+ * listings name its server adopts it then.
  *
  * **What adoption writes**, per plugin and owner, under the owner's lifecycle
  * lock (`oneAtATime`, shared with install, uninstall and update):
@@ -67,7 +70,11 @@ import {
   type PluginOwner,
   type PluginRecordStore,
 } from "../plugins/installed/record.ts";
-import { managedSkillRoots, removeUnownedConnectorSkills } from "../skills/managed-skills.ts";
+import {
+  type ManagedSkillRoots,
+  managedSkillRoots,
+  removeUnownedConnectorSkills,
+} from "../skills/managed-skills.ts";
 import { serializePerWorkspace } from "../workspace/serialize.ts";
 import type { WorkspaceStore } from "../workspace/workspace-store.ts";
 import { materializeSkills, oneAtATime } from "./plugin-install.ts";
@@ -258,6 +265,23 @@ async function adoptForOwner(
     result.adopted.push({ owner, serverName, address });
   }
   if (candidates.length === 0) return;
+  const adoptedNow = new Set<string>();
+  try {
+    await adoptCandidates(deps, identity, owner, shared, result, candidates, adoptedNow);
+  } finally {
+    retireOldBindings(deps.workDir, owner, candidates, adoptedNow);
+  }
+}
+
+async function adoptCandidates(
+  deps: PluginAdoptionDeps,
+  identity: IdentityConnectorStore,
+  owner: PluginOwner,
+  shared: SharedReads,
+  result: PluginAdoptionResult,
+  candidates: readonly Candidate[],
+  adoptedNow: Set<string>,
+): Promise<void> {
   const entries = await shared.entries();
   if (!entries) return;
   const groups = byClaimant(candidates, entries, (c, claimants, why) =>
@@ -274,7 +298,38 @@ async function adoptForOwner(
     if (typeof read === "string" || adopted.length === 0) continue;
     await adoptInto(deps, identity, owner, entry, read, adopted);
     for (const c of adopted) {
+      adoptedNow.add(c.serverName);
       result.adopted.push({ owner, serverName: c.serverName, address: entry.address });
+    }
+  }
+}
+
+/**
+ * A connector this boot leaves plain has no catalog skill: what the old
+ * binding materialized for it goes, so it loads as a plain connector, with its
+ * server's own published skills. Its `skillsLock` stays, as the provenance a
+ * later boot adopts it by, and adoption then writes the plugin's skills.
+ */
+function retireOldBindings(
+  workDir: string,
+  owner: PluginOwner,
+  candidates: readonly Candidate[],
+  adoptedNow: ReadonlySet<string>,
+): void {
+  let roots: ManagedSkillRoots;
+  try {
+    roots = managedSkillRoots(workDir, owner);
+  } catch {
+    return;
+  }
+  for (const c of candidates) {
+    if (adoptedNow.has(c.serverName)) continue;
+    try {
+      removeUnownedConnectorSkills({ roots, serverName: c.serverName, keep: new Set() });
+    } catch (err) {
+      log.warn(
+        `[plugins] ${ownerLabel(owner)}: the old skills of ${c.serverName} were not removed: ${String(err)}`,
+      );
     }
   }
 }

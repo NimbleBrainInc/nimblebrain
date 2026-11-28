@@ -1,8 +1,8 @@
 /**
- * Reading pinned bytes from a plugin catalog (ADR-0068): a bounded fetch, and
- * the sha256 check every catalog read applies before it trusts what came back.
- * The connector skill resolver and the connector list read the catalog through
- * these, so both apply one rule: bytes are used only when their digest is the pin.
+ * Reading pinned bytes from a catalog (ADR-0077): a bounded fetch, and the
+ * sha256 check a pinned read applies before it trusts what came back. The
+ * listing reader and the plugin artifact fetch read through these, so both
+ * apply one rule: bytes are used only when their digest is the pin.
  */
 
 import { createHash } from "node:crypto";
@@ -22,7 +22,7 @@ export class CatalogHttpError extends Error {
     readonly status: number,
     readonly url: string,
   ) {
-    super(`plugin catalog fetch failed: HTTP ${status} (${url})`);
+    super(`catalog fetch failed: HTTP ${status} (${url})`);
   }
 }
 
@@ -34,7 +34,7 @@ export async function fetchBounded(url: string, opts: BoundedFetchOptions): Prom
     await res.body?.cancel();
     throw new CatalogHttpError(res.status, url);
   }
-  const tooLarge = () => new Error(`plugin catalog fetch exceeds ${opts.maxBytes} bytes (${url})`);
+  const tooLarge = () => new Error(`catalog fetch exceeds ${opts.maxBytes} bytes (${url})`);
   const declared = Number(res.headers.get("content-length"));
   if (declared > opts.maxBytes) {
     await res.body?.cancel();
@@ -65,12 +65,4 @@ export async function fetchBounded(url: string, opts: BoundedFetchOptions): Prom
 
 export function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-/** Throw unless `bytes` hash to `expected`, naming `what` and both digests. */
-export function assertDigest(what: string, bytes: Uint8Array, expected: string): void {
-  const actual = sha256Hex(bytes);
-  if (actual !== expected) {
-    throw new Error(`${what} integrity mismatch: got ${actual}, expected ${expected}`);
-  }
 }

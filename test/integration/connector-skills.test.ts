@@ -807,26 +807,39 @@ describe("connector-skill adapter — unmatched tool-affinity", () => {
       source: "plugin:pages@nimblebrain:pages-usage",
       now: "2026-01-01T00:00:00.000Z",
     });
-    await affinityRuntime.getLifecycle().seedInstance(
-      OVERLAY_SERVER,
-      OVERLAY_SERVER,
+    // The plugin's record lists the skill bound to the connection.
+    await affinityRuntime.getPluginRecords().put(
+      { kind: "workspace", wsId: TEST_WORKSPACE_ID },
       {
-        url: servers[1]!.url,
-        serverName: OVERLAY_SERVER,
-        skillsLock: [
+        address: "pages@nimblebrain",
+        digest: `sha256:${"d".repeat(64)}`,
+        type: "application/agent-plugins+zip",
+        installedAt: "2026-01-01T00:00:00.000Z",
+        connectors: [
           {
-            plugin: "pages@nimblebrain",
-            server: "com.test/pages",
-            skill: "pages-usage",
-            version: "c".repeat(64),
-            digest: "d".repeat(64),
-            sha: "a1",
+            key: "pages",
+            name: "ai.nimblebrain/overlaid-mcp",
+            server: {
+              name: "ai.nimblebrain/overlaid-mcp",
+              description: "Pages",
+              version: "1.0.0",
+              remotes: [{ type: "streamable-http", url: servers[1]!.url }],
+            },
           },
         ],
+        skills: [{ name: "pages-usage", server: "pages", sha: "a1" }],
+        starters: [],
       },
-      undefined,
-      TEST_WORKSPACE_ID,
     );
+    await affinityRuntime
+      .getLifecycle()
+      .seedInstance(
+        OVERLAY_SERVER,
+        OVERLAY_SERVER,
+        { url: servers[1]!.url, serverName: OVERLAY_SERVER, installedBy: "pages@nimblebrain" },
+        undefined,
+        TEST_WORKSPACE_ID,
+      );
   });
 
   afterAll(async () => {

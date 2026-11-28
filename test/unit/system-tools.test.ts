@@ -7,7 +7,6 @@ import { createCatalogListings } from "../../src/catalogs/reader.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { managedConnectorRegistryOf } from "../../src/connectors/providers/registry.ts";
 import { extractText, textContent } from "../../src/engine/content-helpers.ts";
 import { NON_ADVANCING_META_KEY } from "../../src/engine/types.ts";
@@ -24,7 +23,7 @@ import type {
 } from "../../src/tools/system-tools.ts";
 import { createSystemTools } from "../../src/tools/system-tools.ts";
 import { listingBytes, listingEntry, pathCatalog } from "../helpers/ai-catalog.ts";
-import { connectorListListings } from "../helpers/connector-list-catalog.ts";
+import { connectorListCatalog, connectorListListings } from "../helpers/connector-list-catalog.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { stub } from "../helpers/stub.ts";
 
@@ -864,7 +863,7 @@ describe("search — scope: catalog", () => {
     // Browse reads listings: the servers as the path catalog an operator mounts.
     const listings = connectorListListings(catalogDir, workDir);
     return stub<Runtime>({
-      getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
+      getConnectorCatalog: () => connectorListCatalog(catalogDir),
       getCatalogListings: () => listings,
       getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
     });
@@ -957,7 +956,7 @@ describe("search — scope: catalog", () => {
       });
       const listings = createCatalogListings({ catalogs, cacheDir: join(workDir, "cache") });
       const runtime = stub<Runtime>({
-        getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
+        getConnectorCatalog: () => connectorListCatalog(catalogDir),
         getCatalogListings: () => listings,
         getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
       });
@@ -990,7 +989,7 @@ describe("search — scope: catalog", () => {
       cacheDir: join(workDir, "cache"),
     });
     const runtime = stub<Runtime>({
-      getConnectorCatalog: () => new ConnectorCatalog(unreadable),
+      getConnectorCatalog: () => connectorListCatalog(unreadable),
       getCatalogListings: () => listings,
       getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
     });

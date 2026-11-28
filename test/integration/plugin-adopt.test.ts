@@ -3,7 +3,8 @@
  * installs"): a connector a catalog install made before records existed (its
  * `skillsLock` records a plugin) is adopted when exactly one listing entry
  * names its server and that entry's verified artifact contains it. Otherwise
- * it stays exactly as it is. After adoption, starters and the plugin list read
+ * it stays a plain connector, unchanged but for the skills its old binding
+ * materialized, which go. After adoption, starters and the plugin list read
  * the record, and nothing opens an archive again.
  */
 
@@ -11,7 +12,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolvePluginCatalogConfig } from "../../src/config/plugin-catalog.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import type { UserIdentity } from "../../src/identity/provider.ts";
@@ -123,8 +123,7 @@ function preRecordRef(server: FixtureServer, serverName: string): ConnectorRef {
         plugin: "notion@nimblebrain",
         server: server.name,
         skill: "notion",
-        // At the current pin, so the old reconcile has nothing to re-bind.
-        version: resolvePluginCatalogConfig().sha256,
+        version: "2".repeat(64),
         digest: "0".repeat(64),
         sha: "1".repeat(64),
       },
@@ -267,7 +266,7 @@ describe("adopting existing installs at boot", () => {
     expect(readFileSync(join(dir, "notion.md"), "utf-8")).toContain("from the plugin");
   });
 
-  test("zero claimants: the connector stays as it was", async () => {
+  test("zero claimants: a plain connector that keeps working, with no catalog skill", async () => {
     const ref = preRecordRef(NOTION, NOTION_SERVER);
     await seedPreRecordWorkspace([ref]);
     writeListing([
@@ -277,12 +276,31 @@ describe("adopting existing installs at boot", () => {
 
     expect(artifactFetches()).toEqual([]);
     const ws = await workspaceRecord(rt);
+    // Unchanged, lock and all: the lock is the provenance a later boot adopts it by.
     expect(ws.connectors).toEqual([ref]);
     expect(ws.plugins ?? []).toEqual([]);
-    expect(readdirSync(join(connectorSkillsDir(), NOTION_SERVER)).sort()).toEqual([
-      "notion.md",
-      "retired.md",
-    ]);
+    // Still a connector of the workspace.
+    expect(rt.getLifecycle().getInstance(NOTION_SERVER, WS)).toBeDefined();
+    // Its old binding's skills are gone, and nothing binds another.
+    expect(existsSync(join(connectorSkillsDir(), NOTION_SERVER))).toBe(false);
+    expect(rt.loadConnectorSkillCandidates(WS)).toEqual([]);
+    expect(rt.listConnectorOverlays(WS)).toEqual([]);
+  });
+
+  test("an unmatched connector is adopted on a later boot whose listing names it", async () => {
+    const ref = preRecordRef(NOTION, NOTION_SERVER);
+    await seedPreRecordWorkspace([ref]);
+    writeListing([]);
+    await boot();
+    expect(existsSync(join(connectorSkillsDir(), NOTION_SERVER))).toBe(false);
+    await stop();
+
+    writeListing([publish("notion", notionPlugin(), NOTION_CLAIM)]);
+    const rt = await boot();
+    const ws = await workspaceRecord(rt);
+    expect(ws.connectors[0]?.installedBy).toBe("notion@test");
+    expect(readdirSync(join(connectorSkillsDir(), NOTION_SERVER))).toEqual(["notion.md"]);
+    expect(rt.loadConnectorSkillCandidates(WS).map((c) => c.name)).toEqual(["notion"]);
   });
 
   test("two claimants: the connector stays as it was, and both are reported", async () => {

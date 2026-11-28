@@ -1,24 +1,25 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browseCatalog } from "../../src/catalogs/browse.ts";
 import { createCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
-import { log } from "../../src/observability/log.ts";
+import type { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
+import { readCatalogEntries } from "../../src/connectors/catalog/read.ts";
 import { pathCatalog } from "../helpers/ai-catalog.ts";
-import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
+import { connectorListCatalog, connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 
 /**
  * `ConnectorCatalog` is the only thing tool handlers should call.
- * These tests pin the contract that composition across the catalog's
- * files — error isolation, dedup, projection, the safety scrub, the
- * lookup tables — lives in one place.
+ * These tests pin the contract that composition of the listed records —
+ * dedup, projection, the safety scrub, the lookup tables — lives in one
+ * place.
  *
- * A catalog is a directory of `ServerDetail` files, so a test writes
- * the files it wants and points the catalog at the directory. Two
- * files stand in for "curation split across more than one file",
- * which is what the aggregation and isolation contracts care about.
+ * A test writes `ServerDetail` files into a directory, which
+ * `connectorListCatalog` lists as bare connectors, as a converted path
+ * catalog carries them. Two files stand in for "curation split across more
+ * than one file", which is what the aggregation and isolation contracts care
+ * about.
  */
 
 let workDir: string;
@@ -49,11 +50,15 @@ function remoteServer(over: Record<string, unknown> = {}): Record<string, unknow
 }
 
 /**
- * The connector list's installable records and its read errors: its
- * projection, dedupe and scrub, as every reader of the list applies them.
+ * The connector list's installable records, and the file-level errors reading
+ * the test's directory reported: its projection, dedupe and scrub, as every
+ * reader of the list applies them.
  */
 async function list(catalog: ConnectorCatalog) {
-  return { entries: await catalog.listings(), errors: (await catalog.servers()).errors };
+  const errors = readCatalogEntries(catalogDir)
+    .diagnostics.filter((d) => d.index === undefined)
+    .map((d) => ({ file: d.source, message: d.message }));
+  return { entries: await catalog.listings(), errors };
 }
 
 /** Browse over the list as an operator now mounts it: converted to a path catalog. */
@@ -104,7 +109,7 @@ describe("ConnectorCatalog listings", () => {
       "echo.yaml",
     );
 
-    const result = await list(new ConnectorCatalog(catalogDir));
+    const result = await list(connectorListCatalog(catalogDir));
     expect(result.errors).toEqual([]);
     expect(result.entries.map((e) => e.id).sort()).toEqual([
       "ai.granola/mcp",
@@ -139,7 +144,7 @@ describe("ConnectorCatalog listings", () => {
     );
     chmodSync(unreadable, 0o000);
     try {
-      const result = await list(new ConnectorCatalog(catalogDir));
+      const result = await list(connectorListCatalog(catalogDir));
       expect(result.entries.map((e) => e.id)).toEqual(["ai.granola/mcp"]);
       expect(result.errors.length).toBe(1);
       expect(result.errors[0]?.file).toBe(unreadable);
@@ -168,7 +173,7 @@ describe("ConnectorCatalog listings", () => {
       },
     ]);
 
-    const result = await list(new ConnectorCatalog(catalogDir));
+    const result = await list(connectorListCatalog(catalogDir));
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]?.description).toBe("first");
   });
@@ -230,7 +235,7 @@ describe("ConnectorCatalog listings", () => {
       },
     ]);
 
-    const result = await list(new ConnectorCatalog(catalogDir));
+    const result = await list(connectorListCatalog(catalogDir));
     expect(result.entries).toEqual([]);
   });
 });
@@ -248,7 +253,7 @@ describe("ConnectorCatalog lookup tables", () => {
       },
     ]);
 
-    const directory = new ConnectorCatalog(catalogDir);
+    const directory = connectorListCatalog(catalogDir);
     await list(directory);
     // Delete the catalog out from under the directory: a second read would
     // now fail, so surviving these calls proves the fetch was memoized.
@@ -280,7 +285,7 @@ describe("ConnectorCatalog lookup tables", () => {
       },
     ]);
 
-    const entry = await new ConnectorCatalog(catalogDir).catalogById("ai.nimblebrain/web");
+    const entry = await connectorListCatalog(catalogDir).catalogById("ai.nimblebrain/web");
     expect(entry).not.toBeNull();
     expect(entry?.id).toBe("ai.nimblebrain/web");
     expect(entry?.iconUrl).toBeUndefined();
@@ -301,7 +306,7 @@ describe("ConnectorCatalog safety scrub (XSS via _meta extension URLs)", () => {
   async function listWith(server: Record<string, unknown>) {
     const catalogDir = freshCatalog();
     writeStaticCatalog([server]);
-    return list(new ConnectorCatalog(catalogDir));
+    return list(connectorListCatalog(catalogDir));
   }
 
   test("drops an entry whose _meta.docsUrl carries a javascript: scheme", async () => {
@@ -377,43 +382,16 @@ describe("ConnectorCatalog server-name collisions", () => {
       remoteServer({ name: "io.safe/mcp" }),
       remoteServer({ name: "a/b.c" }),
     ]);
-    const error = spyOn(log, "error").mockImplementation(() => {});
-    try {
-      const entries = await new ConnectorCatalog(dir).catalogEntries();
-      expect(entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
-      const said = error.mock.calls.map((c) => String(c[0]));
-      expect(said).toHaveLength(2);
-      for (const line of said) {
-        expect(line).toContain('"a-b-c"');
-        expect(line).toContain("a.b/c");
-        expect(line).toContain("a/b.c");
-      }
-    } finally {
-      error.mockRestore();
+    const entries = await connectorListCatalog(dir).catalogEntries();
+    expect(entries.map((e) => e.id)).toEqual(["io.safe/mcp"]);
+    const said = readCatalogEntries(dir)
+      .diagnostics.filter((d) => d.collision)
+      .map((d) => d.message);
+    expect(said).toHaveLength(2);
+    for (const line of said) {
+      expect(line).toContain('"a-b-c"');
+      expect(line).toContain("a.b/c");
+      expect(line).toContain("a/b.c");
     }
-  });
-});
-
-describe("ConnectorCatalog.listingById", () => {
-  test("returns the first listing for an exact id, and null for any other spelling", async () => {
-    const catalogDir = freshCatalog();
-    writeStaticCatalog([
-      remoteServer({ name: "io.example/app" }),
-      remoteServer({
-        name: "io.example/app",
-        remotes: [{ type: "streamable-http", url: "https://second.test/mcp" }],
-      }),
-    ]);
-    const directory = new ConnectorCatalog(catalogDir);
-
-    const listing = await directory.listingById("io.example/app");
-    expect(listing?.install).toEqual({
-      kind: "remote-oauth",
-      url: "https://evil.test/mcp",
-      transportType: "streamable-http",
-      auth: "dcr",
-    });
-    expect(await directory.listingById("IO.Example/app")).toBeNull();
-    expect(await directory.listingById("io.example/other")).toBeNull();
   });
 });

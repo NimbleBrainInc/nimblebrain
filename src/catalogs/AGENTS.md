@@ -30,10 +30,15 @@ Scope: `src/catalogs/`. The AI Catalog listings the operator names in `catalogs`
   carry setup: the artifact's record already does. An entry with several servers or a type
   Browse cannot show is logged and left out, and still installs by address.
 - **A listing's bare connectors are the connector list's records** for a connector no plugin
-  record supplies (`listed-records.ts`, read by `ConnectorCatalog` after the owner's records
-  and before the pinned list): verified against `digest`, schema-checked, and one the safety
+  record supplies (`listed-records.ts`, read by `ConnectorCatalog` after the owner's records,
+  its only other source): verified against `digest`, schema-checked, and one the safety
   scrub refuses kept only for its `adminTools` restriction. An edit to an unpinned listing
-  reaches them at its next read.
+  reaches them at its next read. No list or pin is compiled into the image and no
+  `connectors.yaml` is read at runtime; `src/connectors/catalog/read.ts` reads one only for
+  the converter.
+- **The default catalog is `<NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json`**, read live,
+  used only when `catalogs` is absent. The variable is its base URL and nothing else, so tests
+  (`test/preload.ts` points it at a refusing port) and dev can aim it without a block.
 - **A path catalog replaces a mounted connector directory.** There is no `curated` catalog,
   no reserved name, and no install from a directory. An operator converts a directory of
   `{servers: [...]}` files with `bun run catalog:convert` and mounts the listing it writes.

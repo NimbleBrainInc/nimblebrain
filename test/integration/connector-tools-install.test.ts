@@ -3,8 +3,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import { ConnectorLifecycleManager } from "../../src/connectors/runtime/lifecycle.ts";
 import { textContent } from "../../src/engine/content-helpers.ts";
@@ -20,13 +18,8 @@ import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceContext } from "../../src/workspace/context.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
-import {
-  boundSkill,
-  buildCatalog,
-  OFFLINE_PLUGIN_CATALOG_URL,
-  TEST_CATALOG_URL,
-} from "../helpers/plugin-catalog.ts";
 import { stub } from "../helpers/stub.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
 
@@ -106,8 +99,7 @@ async function buildHarness(
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getWorkspaceContext: (id: string) => new WorkspaceContext({ wsId: id, workDir }),
-    getConnectorCatalog: () => new ConnectorCatalog(CONNECTOR_FIXTURE_DIR),
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(CONNECTOR_FIXTURE_DIR, { workDir, workspaces: workspaceStore }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: (_id: string) => workspaceRegistry,
     getPermissionStore: () =>
@@ -196,7 +188,7 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     });
     expect(result.isError).toBe(false);
     expect((result.content?.[0] as { text?: string } | undefined)?.text).toContain(
-      "in this workspace",
+      "Installed ai-granola-mcp@test",
     );
     const sc = result.structuredContent as { wsId?: string };
     expect(sc.wsId).toBe(personalWsId);
@@ -279,52 +271,6 @@ describe("manage_connectors.install (T010) — persisted shape + hard-error", ()
     );
     expect((sharedDoc.connectors as unknown[]).length).toBe(0);
     expect((personalDoc.connectors as unknown[]).length).toBe(1);
-  });
-
-  test("DCR connector binds its plugin's skill by registry name, not the slug", async () => {
-    // A plugin names its server by registry name (`ai.granola/mcp`), which is the
-    // catalog entry's id, NOT the slugified serverName (`ai-granola-mcp`). The
-    // fixture catalog binds a skill only to the registry name, so a regression
-    // that looks up the slug binds nothing and fails the assertion below.
-    const catalog = buildCatalog([
-      {
-        name: "granola",
-        servers: { granola: "ai.granola/mcp" },
-        skills: { "granola-usage": boundSkill("granola-usage", "granola") },
-      },
-    ]);
-    process.env.NB_PLUGIN_CATALOG_URL = TEST_CATALOG_URL;
-    process.env.NB_PLUGIN_CATALOG_SHA256 = catalog.pin;
-    h.runtime.getLifecycle().setConnectorSkillFetch(catalog.fetch);
-
-    try {
-      const result = await h.tool.handler({
-        action: "install",
-        entry: dcrEntry(),
-        wsId: h.sharedWsId,
-      });
-      expect(result.isError).toBe(false);
-    } finally {
-      process.env.NB_PLUGIN_CATALOG_URL = OFFLINE_PLUGIN_CATALOG_URL;
-      delete process.env.NB_PLUGIN_CATALOG_SHA256;
-    }
-
-    const wsDoc = JSON.parse(
-      readFileSync(join(h.workDir, "workspaces", h.sharedWsId, "workspace.json"), "utf-8"),
-    );
-    const installed = (
-      wsDoc.connectors as Array<{ url?: string; skillsLock?: Array<Record<string, string>> }>
-    ).find((b) => b.url === "https://mcp.granola.ai/mcp");
-    expect(installed?.skillsLock).toEqual([
-      {
-        plugin: "granola@nimblebrain",
-        server: "ai.granola/mcp",
-        skill: "granola-usage",
-        version: catalog.pin,
-        digest: catalog.digests.granola!,
-        sha: installed!.skillsLock![0]!.sha!,
-      },
-    ]);
   });
 });
 

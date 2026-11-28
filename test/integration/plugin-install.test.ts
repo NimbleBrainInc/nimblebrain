@@ -224,6 +224,72 @@ describe("plugin install", () => {
     expect((await workspace(rt, wsId)).plugins ?? []).toEqual([]);
   }, 30_000);
 
+  test("an entry with only an id installs the one listing entry that names its server", async () => {
+    writeListing([
+      publish("notion", notionPlugin(), {
+        servers: { notion: { name: NOTION.name, auth: "dcr" } },
+      }),
+      bareConnectorEntry("linear", LINEAR),
+    ]);
+    const { rt, wsId, call } = await boot();
+    const byId = (id: string, url = "https://forged.test/mcp") =>
+      call({
+        action: "install",
+        entry: {
+          id,
+          name: id,
+          description: "x",
+          install: { kind: "remote-oauth", url, auth: "dcr" },
+        },
+      });
+
+    // Named in a plugin's `servers`: the plugin installs, at its artifact's URL.
+    const notion = await byId(NOTION.name);
+    expect(notion.structuredContent).toMatchObject({ address: "notion@test" });
+    // A bare connector's inline record names it: the one-item plugin installs.
+    const linear = await byId(LINEAR.name);
+    expect(linear.structuredContent).toMatchObject({ address: "linear@test" });
+    const ws = await workspace(rt, wsId);
+    expect(ws.plugins?.map((p) => p.address)).toEqual(["notion@test", "linear@test"]);
+    expect(ws.connectors.map((c) => [c.serverName, c.url, c.installedBy])).toEqual([
+      [NOTION_SERVER, NOTION.url, "notion@test"],
+      [LINEAR_SERVER, LINEAR.url, "linear@test"],
+    ]);
+    // Nothing writes the old binding's lock.
+    expect(ws.connectors.every((c) => c.skillsLock === undefined)).toBe(true);
+
+    // An id no listing names is refused, and installs nothing.
+    const unknown = await byId("com.unlisted/mcp");
+    expect(unknown.isError).toBe(true);
+    expect(unknown.structuredContent).toMatchObject({ error: "NOT_IN_CATALOG" });
+    expect((await workspace(rt, wsId)).connectors).toHaveLength(2);
+  }, 30_000);
+
+  test("an id two listing entries name is refused with both addresses", async () => {
+    writeListing([
+      publish("notion", notionPlugin(), {
+        servers: { notion: { name: NOTION.name, auth: "dcr" } },
+      }),
+      bareConnectorEntry("notion-bare", NOTION),
+    ]);
+    const { rt, wsId, call } = await boot();
+    const result = await call({
+      action: "install",
+      entry: {
+        id: NOTION.name,
+        name: "Notion",
+        description: "x",
+        install: { kind: "remote-oauth", url: NOTION.url, auth: "dcr" },
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ error: "AMBIGUOUS" });
+    const text = (result.content[0] as { text?: string }).text ?? "";
+    expect(text).toContain("notion@test");
+    expect(text).toContain("notion-bare@test");
+    expect((await workspace(rt, wsId)).connectors).toEqual([]);
+  }, 30_000);
+
   test("an artifact that does not match its digest installs nothing", async () => {
     writeListing([publish("notion", notionPlugin(), { digest: `sha256:${"0".repeat(64)}` })]);
     const { rt, wsId, call } = await boot();

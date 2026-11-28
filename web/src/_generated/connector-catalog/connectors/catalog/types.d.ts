@@ -31,9 +31,10 @@ export type BrowseStatus = "ready" | "setup";
  */
 export interface CatalogListing {
     /**
-     * The server's registry name (`ServerDetail.name`, reverse-DNS form): what
-     * install resolves to the connector list's record. Two catalogs listing one
-     * server give two rows with this id and distinct `address`es.
+     * The server's registry name (`ServerDetail.name`, reverse-DNS form): an
+     * install with only an id installs the one listing entry naming it. Two
+     * catalogs listing one server give two rows with this id and distinct
+     * `address`es.
      */
     id: string;
     /**

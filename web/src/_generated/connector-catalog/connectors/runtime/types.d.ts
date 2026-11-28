@@ -93,17 +93,16 @@ export interface RemoteTransportConfig {
     sessionId?: string;
 }
 /**
- * One curated skill bound to a connector, from the connector's plugin in the
- * pinned catalog (ADR-0068). Recorded on the connector's `ConnectorRef.skillsLock`
- * at install so the dedupe path can tell a connector HAS a curated overlay (skip
- * its `skill://<name>/SKILL.md`), so the boot reconcile knows which pin it was
- * bound at, and so the binding is auditable down to the bytes. Cleanup on
- * uninstall is keyed on `serverName` (it removes the whole
- * `connector-skills/<server>/` dir), not on these entries.
+ * One skill a catalog install bound to a connector before installed-plugin
+ * records existed (ADR-0068), as that install recorded it on
+ * `ConnectorRef.skillsLock`. Nothing writes one now. Boot adoption
+ * (`src/tools/plugin-adopt.ts`) reads `plugin` and `server` as the
+ * connector's catalog provenance and drops the lock when it adopts the
+ * connector into a plugin; nothing else reads it.
  *
- * A lock written by a runtime that read the connector-skills repo carries
- * `identity` instead of `plugin`/`server`/`skill`/`digest`, and a `version` that
- * is a git tag; its version never equals a catalog pin, so boot re-binds it.
+ * A lock written while skills came from the connector-skills repo carries
+ * `identity` instead of `plugin`/`server`/`skill`/`digest`, so it is no
+ * provenance and its connector is never adopted.
  */
 export interface ConnectorSkillLockEntry {
     /** The plugin carrying the skill, as `name@catalog` (`gmail@nimblebrain`). */
@@ -112,7 +111,7 @@ export interface ConnectorSkillLockEntry {
     server?: string;
     /** The skill's name in its plugin. */
     skill?: string;
-    /** The catalog pin the skill was resolved at: sha256 of the catalog's NimbleBrain index. */
+    /** The catalog pin the skill was resolved at. */
     version: string;
     /** sha256 (hex) of the plugin archive the skill was read from. */
     digest?: string;
@@ -134,7 +133,7 @@ export type ConnectorRef = {
     serverName: string;
     transport?: RemoteTransportConfig;
     ui?: ConnectorUiMeta | null;
-    /** Materialized connector-skill overlays bound to this connector. */
+    /** A pre-record catalog install's binding, read only as provenance by boot adoption. */
     skillsLock?: ConnectorSkillLockEntry[];
     /**
      * OAuth identity scope for this URL connector. `"workspace"` is the

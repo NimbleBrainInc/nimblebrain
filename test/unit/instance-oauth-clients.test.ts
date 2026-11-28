@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import {
   _resetConnectorsConfigForTest,
   type OAuthClientDeclarations,
@@ -17,6 +16,7 @@ import {
 import { resolveStaticOAuthClient } from "../../src/connectors/runtime/oauth-static-client.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { connectorListCatalog } from "../helpers/connector-list-catalog.ts";
 import { installTestCredentialStore } from "../helpers/credential-store.ts";
 
 // `auth: static` in the connector fixture; `com.notion/mcp` there is DCR.
@@ -27,7 +27,7 @@ const DROPBOX_ENV = "COM_DROPBOX_MCP_CLIENT_SECRET";
 async function bind(clients: OAuthClientDeclarations): Promise<void> {
   setConnectorsConfig({ oauthClients: clients });
   await bindInstanceOAuthClients(() =>
-    new ConnectorCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
+    connectorListCatalog(CONNECTOR_FIXTURE_DIR).catalogByIdMap(),
   );
 }
 

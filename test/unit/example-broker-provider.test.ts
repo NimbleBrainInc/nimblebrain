@@ -19,8 +19,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import type {
   BrokeredStateOptions,
@@ -43,6 +41,7 @@ import type { Runtime } from "../../src/runtime/runtime.ts";
 import { createManageConnectorsTool } from "../../src/tools/connector-tools.ts";
 import { ToolRegistry } from "../../src/tools/registry.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { connectorListPluginRuntime } from "../helpers/connector-list-catalog.ts";
 import {
   installTestCredentialStore,
   resetTestCredentialStore,
@@ -159,9 +158,10 @@ function buildHarness(provider: ManagedConnectorProvider): Harness {
   const runtime = stub<Runtime>({
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
-    getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "catalog.yaml")),
-    // No catalogs configured: an id only the connector list could hold.
-    getCatalogListings: () => noCatalogListings(),
+    ...connectorListPluginRuntime(join(workDir, "catalog.yaml"), {
+      workDir,
+      workspaces: workspaceStore,
+    }),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,

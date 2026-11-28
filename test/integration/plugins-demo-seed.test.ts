@@ -35,11 +35,8 @@ let summary: SeedSummary;
 const realFetch = globalThis.fetch;
 
 /**
- * Loopback reaches the mock fleet; anything else is a 404. Boot binds curated
- * connector skills for every seeded connector, and the lifecycle resolves them
- * with the global `fetch` it holds from construction, before a test could call
- * `setConnectorSkillFetch`. A 404 is the "nothing curated" answer, so boot
- * stays offline and every connector boots without skills, as the fixtures expect.
+ * Loopback reaches the mock fleet; anything else is a 404, so the boot stays
+ * offline whatever a seeded connector or catalog names.
  */
 const offlineFetch = fakeFetch(async (input, init) => {
   const url = new URL(input instanceof Request ? input.url : input);

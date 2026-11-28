@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { readCatalogServers, validateCatalog } from "../../src/connectors/catalog/read.ts";
 import { CONNECTOR_FIXTURE_DIR } from "../helpers/connector-fixtures.ts";
+import { connectorListCatalog } from "../helpers/connector-list-catalog.ts";
 
 /**
  * `validateCatalog` is what a pre-merge gate runs over a catalog
@@ -187,7 +187,7 @@ describe("validateCatalog", () => {
       true,
       true,
     ]);
-    const browse = await new ConnectorCatalog(dir).catalogEntries();
+    const browse = await connectorListCatalog(dir).catalogEntries();
     expect(browse.map((e) => e.id)).toEqual(["com.example/complete"]);
   });
 

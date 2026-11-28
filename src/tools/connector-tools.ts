@@ -1494,19 +1494,21 @@ async function handleGetInstalled(
 }
 
 /**
- * Install a connector. The caller names a connector; the operator's catalog
- * decides what that install is (ADR-0065, ADR-0068).
+ * Install a connector. The caller names a catalog item; the operator's
+ * catalogs decide what that install is (ADR-0065, ADR-0077).
  *
- * A `remote-oauth` request is resolved by its exact id to the catalog's own
- * listing, and the caller's copy of the entry is discarded: url, auth,
- * transport, scopes and authorization parameters all come from the catalog. An
- * id the catalog does not list is refused, on every install, local or hosted,
- * because a URL typed on a local install arrives as `direct-url`, never as a
- * `remote-oauth` entry. `direct-url` is the only caller-shaped install, and
- * only the local-install gate admits it.
+ * Every install from a catalog is a plugin install by address: `address`, or
+ * the address an entry carries, names the item, and its verified artifact
+ * alone decides what is installed. A `remote-oauth` entry with only an id
+ * resolves to the one listing entry that names that server (in its
+ * extension's `servers`, or a bare connector's inline record); an id no
+ * listing names is refused (`NOT_IN_CATALOG`), and one two entries name is
+ * refused with both addresses (`AMBIGUOUS`). The caller's copy of the entry
+ * is never installed. `direct-url` is the only caller-shaped install, and only
+ * the local-install gate admits it.
  *
- * Both checks run before the identity / workspace split, so a personal install
- * obeys them exactly as a workspace install does.
+ * The local-install gate runs before the identity / workspace split, so a
+ * personal install obeys it exactly as a workspace install does.
  *
  * `parseCatalogListing` still gates the wire payload's shape first, so a
  * malformed request is refused the same way whatever it names.
@@ -1532,33 +1534,35 @@ async function handleInstall(
   // An entry with only an id installs the one catalog item that lists its server.
   if (requested.install.kind === "remote-oauth") {
     const item = await catalogItemForServer(ctx, requested.id);
-    if (item && "isError" in item) return item;
-    if (item) return handleInstallPlugin(ctx, identity, item.address, wsIdArg, scope, grantWsId);
+    if ("isError" in item) return item;
+    return handleInstallPlugin(ctx, identity, item.address, wsIdArg, scope, grantWsId);
   }
 
-  const resolved = await resolveInstallEntry(ctx, requested);
-  if ("isError" in resolved) return resolved;
-  return installConnectorEntry(ctx, identity, resolved, wsIdArg, scope, grantWsId);
+  if (ctx.runtime.getHostLoopback() === null) {
+    return codedErr(
+      "DIRECT_URL_NOT_ALLOWED",
+      "Adding a server by URL is available only on a local install (npx nimblebrain). " +
+        "Connectors on this instance come from its catalog.",
+    );
+  }
+  return installDirectUrl(ctx, identity, requested, requested.install, wsIdArg, scope);
 }
 
-/** Install a connector from the connector list's own entry, or one added by URL. */
-async function installConnectorEntry(
+/** Install a server added by its URL on a local install (ADR-0065), into a workspace. */
+async function installDirectUrl(
   ctx: ManageConnectorsContext,
   identity: UserIdentity,
   entry: CatalogListing,
+  install: DirectUrlInstall,
   wsIdArg: string | undefined,
   scope: string | undefined,
-  grantWsId: string | null,
 ): Promise<ToolResult> {
-  // Identity-target install: `scope: "identity"` installs a PERSONAL connector on
-  // the caller's own identity — no workspace, credentials bound to the user. An
-  // explicit `wsId` also grants it there (ADR-0069: installing from inside a
-  // workspace grants it there in the same act). Branch before the workspace
-  // requirement below.
+  // Personal connectors are remote MCP connections from a catalog.
   if (scope === "identity") {
-    return grantWsId
-      ? handleInstallIdentityAndGrant(ctx, identity, entry, grantWsId)
-      : handleInstallIdentity(ctx, identity, entry);
+    return errResult(
+      `Personal connectors are remote MCP connections. "${entry.id}" installs as a ` +
+        `"direct-url" connector — install it into a workspace instead.`,
+    );
   }
 
   // `wsId` is REQUIRED for every install, but it resolves to the request's
@@ -1583,12 +1587,7 @@ async function installConnectorEntry(
   const admission = workspaceInstallAdmission(ws, identity, entry);
   if (admission) return admission;
 
-  switch (entry.install.kind) {
-    case "remote-oauth":
-      return handleInstallRemoteOAuth(ctx, wsId, ws, entry);
-    case "direct-url":
-      return handleInstallDirectUrl(ctx, wsId, ws, entry.install);
-  }
+  return handleInstallDirectUrl(ctx, wsId, ws, install);
 }
 
 /** The `address` an install request's entry carries, when it carries one. */
@@ -1600,13 +1599,13 @@ function entryAddress(raw: unknown): string {
 /**
  * The catalog item an id-only install request means: the one listing entry
  * that names server `id` (in its extension's `servers`, or a bare connector's
- * inline record), or null to fall through to the connector list. Two catalogs
+ * inline record). An id no listing names is `NOT_IN_CATALOG`; two entries
  * naming the server is a refusal that names both addresses.
  */
 async function catalogItemForServer(
   ctx: ManageConnectorsContext,
   id: string,
-): Promise<{ address: string } | ToolResult | null> {
+): Promise<{ address: string } | ToolResult> {
   const addresses: string[] = [];
   for (const snapshot of await ctx.runtime.getCatalogListings().snapshots()) {
     for (const entry of snapshot.entries) {
@@ -1617,7 +1616,13 @@ async function catalogItemForServer(
       if (named || inline) addresses.push(entry.address);
     }
   }
-  if (addresses.length === 0) return null;
+  if (addresses.length === 0) {
+    return codedErr(
+      "NOT_IN_CATALOG",
+      `"${id}" is not in this instance's catalogs. ` +
+        "Connectors on this instance come from its catalogs.",
+    );
+  }
   if (addresses.length > 1) {
     return codedErr(
       "AMBIGUOUS",
@@ -1674,10 +1679,7 @@ export function kernelConnectorOps(runtime: Runtime): ConnectorOps {
       if (owner.kind === "person") return personal();
       const ws = await workspace(owner.wsId);
       if (!ws) return errResult(`Workspace "${owner.wsId}" not found.`);
-      return handleInstallRemoteOAuth(ctxFor(owner.wsId), owner.wsId, ws, listing, {
-        ...opts,
-        bindSkills: false,
-      });
+      return handleInstallRemoteOAuth(ctxFor(owner.wsId), owner.wsId, ws, listing, opts);
     },
     disconnect: async (owner, serverName) => {
       if (owner.kind === "person") return personal();
@@ -1721,8 +1723,7 @@ function pluginConnectorOps(ctx: ManageConnectorsContext, identity: UserIdentity
       if (!ws) return errResult(`Workspace "${owner.wsId}" not found.`);
       const admission = workspaceInstallAdmission(ws, identity, listing);
       if (admission) return admission;
-      // The plugin's managed skills come from its artifact, never the resolver.
-      return handleInstallRemoteOAuth(ctx, owner.wsId, ws, listing, { ...opts, bindSkills: false });
+      return handleInstallRemoteOAuth(ctx, owner.wsId, ws, listing, opts);
     },
     disconnect: async (owner, serverName) =>
       owner.kind === "person"
@@ -1819,40 +1820,6 @@ async function handlePluginAction(
 }
 
 /**
- * Turn an install request into the install action the runtime will run, or
- * refuse it.
- *
- *   - `direct-url`: adding a server by URL is a local-install capability
- *     (ADR-0065), refused wherever the local-install gate is shut.
- *   - `remote-oauth`: the catalog's listing for the requested id, matched
- *     exactly; `NOT_IN_CATALOG` when it lists none.
- */
-async function resolveInstallEntry(
-  ctx: ManageConnectorsContext,
-  requested: CatalogListing,
-): Promise<CatalogListing | ToolResult> {
-  if (requested.install.kind === "direct-url") {
-    if (ctx.runtime.getHostLoopback() === null) {
-      return codedErr(
-        "DIRECT_URL_NOT_ALLOWED",
-        "Adding a server by URL is available only on a local install (npx nimblebrain). " +
-          "Connectors on this instance come from its catalog.",
-      );
-    }
-    return requested;
-  }
-  const listing = await ctx.runtime.getConnectorCatalog().listingById(requested.id);
-  if (!listing) {
-    return codedErr(
-      "NOT_IN_CATALOG",
-      `"${requested.id}" is not in this instance's catalog. ` +
-        "Connectors on this instance come from its catalog.",
-    );
-  }
-  return listing;
-}
-
-/**
  * Gate a workspace-target install: admin role and the workspace connector
  * allow-list. Returns an error result to short-circuit on, or `null` to proceed.
  *
@@ -1881,39 +1848,6 @@ function workspaceInstallAdmission(
     return errResult(`Connector "${entry.id}" not visible in this workspace.`);
   }
   return null;
-}
-
-/**
- * `install` with `scope: "identity"` and a `wsId` — install the personal
- * connector and grant it into that workspace, the one the person installed it
- * from (ADR-0069: installing from inside a workspace grants it there in the
- * same act). The grant needs only the install record, not a connection, so it
- * is written before the Connect round trip and holds whether the browser comes
- * back or not. A re-install grants too (the grant is idempotent), which is how
- * a person who already has the connector turns it on in another workspace.
- *
- * A workspace the caller doesn't belong to is refused before anything is
- * written, so a refused grant never leaves an install behind.
- */
-async function handleInstallIdentityAndGrant(
-  ctx: ManageConnectorsContext,
-  identity: UserIdentity,
-  entry: CatalogListing,
-  grantWsId: string,
-): Promise<ToolResult> {
-  const target = await personalGrantTarget(ctx, identity.id, grantWsId);
-  if ("isError" in target) return target;
-
-  const installed = await handleInstallIdentity(ctx, identity, entry);
-  const serverName = installed.structuredContent?.serverName;
-  if (installed.isError || typeof serverName !== "string") return installed;
-
-  await setPersonalGrant(ctx, identity.id, serverName, target.id, true);
-  return {
-    content: textContent(`${serverName} is on in ${target.name}. Connect it to authenticate.`),
-    structuredContent: { ...installed.structuredContent, grantedWsId: target.id },
-    isError: false,
-  };
 }
 
 /**
@@ -1975,7 +1909,7 @@ async function handleInstallIdentity(
     );
   }
 
-  // `entry` is the catalog's own listing (`resolveInstallEntry`), so a brokered
+  // `entry` is built from the plugin's verified server record, so a brokered
   // block reaching `createSession` is the operator's. `provider`, and `static`
   // without an instance OAuth client, are already rejected above.
   const validated = validateRemoteOAuthInstall(entry, entry.install);
@@ -2042,11 +1976,6 @@ async function handleInstallIdentity(
   const ref = await identityConnectorRef(ctx, callerId, entry, action, brokeredWiring);
   if ("__err" in ref) return errResult(ref.__err);
   Object.assign(ref, provenance(opts));
-
-  // The connector-skill overlay (`syncBoundSkills`) is workspace-keyed; the
-  // identity-plane overlay (materializing into the user's skill store) is a
-  // follow-up. It's best-effort / non-fatal, so skipping it doesn't affect the
-  // connector's function — do NOT fake a wsId to force it.
 
   await store.add(callerId, ref);
 
@@ -2428,7 +2357,7 @@ async function handleInstallRemoteOAuth(
   wsId: string,
   ws: Workspace,
   entry: CatalogListing,
-  opts: { bindSkills?: boolean } & PluginConnectOptions = {},
+  opts: PluginConnectOptions = {},
 ): Promise<ToolResult> {
   if (entry.install.kind !== "remote-oauth") {
     return errResult("invariant violated: handleInstallRemoteOAuth requires remote-oauth entry");
@@ -2495,22 +2424,6 @@ async function handleInstallRemoteOAuth(
     wiring.staticOAuthClient,
   );
   Object.assign(ref, provenance(opts));
-  // Bind the curated skills the catalog's plugin for this server carries, if
-  // any. The plugin names its server by registry name, which is the catalog
-  // entry's id (`com.dropbox/mcp`), not the slugified serverName. Best-effort +
-  // non-fatal (see `syncBoundSkills`): the returned lock rides the persisted ref
-  // so uninstall cleans it up and the dedupe path knows the connector has an
-  // overlay. The skills materialize into the workspace's `connector-skills/`
-  // store, NEVER the system prompt.
-  if (opts.bindSkills !== false) {
-    const skillsLock = await lifecycle.syncBoundSkills(
-      entry.id,
-      serverName,
-      wsId,
-      ctx.runtime.getWorkDir(),
-    );
-    if (skillsLock.length > 0) ref.skillsLock = skillsLock;
-  }
   await putWorkspaceConnector(ctx, wsId, ref);
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
   await lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
@@ -2971,9 +2884,8 @@ function validateSecretHeaders(
 /**
  * Cheap up-front check of a catalog install action's completeness.
  *
- * `entry` is the operator catalog's own listing (`resolveInstallEntry`), so
- * every field here is operator-authored; nothing from the caller reaches this
- * point. What remains to check is that the entry carries what its auth kind
+ * `entry` is built from the plugin's verified server record, so every field
+ * here is the catalog's; nothing from the caller reaches this point. What remains to check is that the entry carries what its auth kind
  * needs:
  *
  *   - `static` needs its `oauthClientSetup`.
@@ -3131,9 +3043,9 @@ async function loadStaticOAuthClient(
  * `undefined` when the operator declared none for its id.
  *
  * The client is bound, at boot, to the URL the catalog published for the id then.
- * The install action is the catalog's current entry
- * (`resolveInstallEntry`), so the two differ only when the catalog moved the
- * entry since boot; the install is refused until a restart rebinds the client.
+ * The install action is the plugin's current server record, so the two differ
+ * only when the catalog moved the entry since boot; the install is refused
+ * until a restart rebinds the client.
  * The resolver checks the same binding on every connect
  * (`resolveStaticOAuthClient`), which is what keeps the operator's secret on the
  * server the catalog named.

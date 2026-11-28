@@ -25,11 +25,7 @@ import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.t
 import { effectiveRunLimits, type ResolvedRunsConfig, resolveRunsConfig } from "../config/runs.ts";
 import { resolveWorkspacesConfig } from "../config/workspaces.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
-import {
-  ConnectorCatalog,
-  catalogLocation,
-  warnIfCatalogEmpty,
-} from "../connectors/catalog/catalog.ts";
+import { ConnectorCatalog } from "../connectors/catalog/catalog.ts";
 import { getNimbleBrainHostMeta } from "../connectors/catalog/host-meta.ts";
 import type { ServerDetail } from "../connectors/catalog/server-detail.ts";
 import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
@@ -47,7 +43,6 @@ import {
   namedUi,
   withCatalogUi,
 } from "../connectors/runtime/catalog-ui.ts";
-import { bootReconcileConnectorSkills } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { sanitizePlacements } from "../connectors/runtime/defaults.ts";
 import { resolveHostLoopback, setHostLoopbackAlias } from "../connectors/runtime/host-loopback.ts";
 import { setInBandAuthErrorsCatalog } from "../connectors/runtime/in-band-auth-errors.ts";
@@ -1155,7 +1150,7 @@ export class Runtime {
     // A listing's bare connector is read first, as every connector-list read is.
     // Throws on a declared client with no client id or secret.
     await bindInstanceOAuthClients(() =>
-      new ConnectorCatalog(catalogLocation(workDir), undefined, async () =>
+      new ConnectorCatalog(async () =>
         listedServerRecords(await catalogListings.snapshots()),
       ).catalogByIdMap(),
     );
@@ -1576,22 +1571,6 @@ export class Runtime {
         ),
       );
 
-      // Reconcile connector skills to the pinned plugin catalog. They bind only
-      // at connector install, and the pin is deploy-time config — so boot (a
-      // restart) is exactly when a pin bump must reach connectors that are
-      // already installed. Best-effort + pin-gated: a no-op when nothing is
-      // stale, so steady-state boots pay only a per-connector pin comparison.
-      await bootReconcileConnectorSkills({
-        workDir: rt.getWorkDir(),
-        listWorkspaces: () => workspaceStore.list(),
-        updateWorkspaceConnectors: (wsId, connectors) =>
-          workspaceStore.update(wsId, { connectors }),
-        syncBoundSkills: (server, serverName, wsId, wd) =>
-          lifecycle.syncBoundSkills(server, serverName, wsId, wd),
-        catalogByIdMap: () => rt.getConnectorCatalog().catalogByIdMap(),
-        catalogByUrl: () => rt.getConnectorCatalog().catalogByUrl(),
-      });
-
       // Report Composio auth-config wiring across the whole catalog. Resolution is
       // lazy and per-connector, so it only ever runs for toolkits someone has
       // installed, connected, or probed — the wrong set for catching an
@@ -1600,9 +1579,6 @@ export class Runtime {
         catalogEntries: () => rt.getConnectorCatalog().catalogEntries(),
       });
 
-      // Boot-time visibility: reading the connector list here also fetches the
-      // pinned catalog's list on a first boot, and an empty one is logged.
-      await warnIfCatalogEmpty(new ConnectorCatalog(catalogLocation(workDir)));
       // Read every catalog's listing once in the background, so the first
       // Browse finds a warm copy and an unreachable catalog is logged at boot.
       void rt._catalogListings.snapshots();
@@ -4346,17 +4322,9 @@ export class Runtime {
     // Servers with a materialized connector overlay: skip synthesizing their
     // `skill://…/SKILL.md` guidance — the curated overlay supersedes it (and
     // would otherwise double the guidance under two framings). A server "has an
-    // overlay" iff an installed plugin's record lists a skill bound to it, or
-    // (a connector no record names) its persisted ref carries a non-empty
-    // `skillsLock`. The shas key the overlay affinity check to the overlay version.
-    const overlayLocks = new Map<string, string>();
-    for (const i of this.getConnectorInstancesForWorkspace(wsId)) {
-      const lock = i.ref && "skillsLock" in i.ref ? i.ref.skillsLock : undefined;
-      if (lock?.length) overlayLocks.set(i.serverName, lock.map((e) => e.sha).join(","));
-    }
-    for (const [serverName, shas] of await this.managedOverlayShas({ kind: "workspace", wsId })) {
-      overlayLocks.set(serverName, shas);
-    }
+    // overlay" iff an installed plugin's record lists a skill bound to it. The
+    // shas key the overlay affinity check to the overlay version.
+    const overlayLocks = await this.managedOverlayShas({ kind: "workspace", wsId });
 
     const candidates: string[] = [];
     const overlaidSources: ToolSource[] = [];
@@ -5997,17 +5965,14 @@ export class Runtime {
   }
 
   /**
-   * Build a fresh `ConnectorCatalog` — the one seam for where connectors
-   * come from. Per-request instance so its read cache lives exactly as
-   * long as the request that opened it.
-   */
-  /**
    * The connector list, as `owner` sees it: the server records the plugins
    * that owner installed supplied, first per name in its install order, ahead
-   * of the operator's list. One owner's plugins never shape another owner's
-   * connection, so a read about an installed connection names its owner; with
-   * none, the read is the operator's list alone. `sharing` reuses another
-   * catalog's read of the operator's list, for a sweep over many owners.
+   * of the listings' bare connectors. One owner's plugins never shape another
+   * owner's connection, so a read about an installed connection names its
+   * owner; with none, the read is the listings' alone. A fresh instance per
+   * request, so its read cache lives exactly as long as the request that
+   * opened it. `sharing` reuses another catalog's read of the listings, for a
+   * sweep over many owners.
    */
   getConnectorCatalog(
     owner?: PluginOwner,
@@ -6015,7 +5980,7 @@ export class Runtime {
   ): ConnectorCatalog {
     const base =
       opts.sharing ??
-      new ConnectorCatalog(catalogLocation(this.getWorkDir()), undefined, async () =>
+      new ConnectorCatalog(async () =>
         listedServerRecords(await this._catalogListings.snapshots()),
       );
     return owner ? base.forOwner(() => this.installedServerRecords(owner)) : base;

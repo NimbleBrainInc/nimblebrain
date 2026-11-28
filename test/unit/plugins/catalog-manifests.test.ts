@@ -13,7 +13,8 @@ import {
   parsePluginManifest,
 } from "../../../src/plugins/manifest.ts";
 import { readZip } from "../../../src/util/zip.ts";
-import { boundSkill, buildCatalog } from "../../helpers/plugin-catalog.ts";
+import { pluginZip } from "../../helpers/plugin-artifacts.ts";
+import { boundSkill } from "../../helpers/plugin-catalog.ts";
 
 const PATHS = { root: "/plugins/p", data: "/data/p" };
 
@@ -92,23 +93,25 @@ describe("the catalog's manifests validate under the one reader", () => {
     ).toMatchObject({ nimblebrainOnly: true, servers: {} });
   });
 
-  test("every plugin the catalog test fixture builds validates, and reads the same both ways", () => {
-    const catalog = buildCatalog([
-      {
+  test("every plugin the artifact test fixture builds validates, and reads the same both ways", () => {
+    const plugins = {
+      gmail: pluginZip({
         name: "gmail",
-        servers: { gmail: "com.google/gmail" },
+        servers: { gmail: { name: "com.google/gmail", url: "https://gmail.test/mcp" } },
         skills: { gmail: boundSkill("gmail", "gmail") },
-      },
-      { name: "close", servers: { close: "com.close/mcp" } },
-      {
+      }),
+      close: pluginZip({
+        name: "close",
+        servers: { close: { name: "com.close/mcp", url: "https://close.test/mcp" } },
+      }),
+      linear: pluginZip({
         name: "linear",
-        servers: { linear: "app.linear/mcp" },
-        conversationStarters: [{ title: "What's due?", text: "List my issues by due date." }],
-      },
-    ]);
-    for (const [name, digest] of Object.entries(catalog.digests)) {
-      const url = [...catalog.objects.keys()].find((u) => u.includes(digest))!;
-      const files = readZip(catalog.objects.get(url)!);
+        servers: { linear: { name: "app.linear/mcp", url: "https://linear.test/mcp" } },
+        starters: [{ title: "What's due?", text: "List my issues by due date." }],
+      }),
+    };
+    for (const [name, archive] of Object.entries(plugins)) {
+      const files = readZip(archive);
       const strict = parsePluginManifest(name, files, PATHS);
       const lenient = nimblebrainExtension(
         JSON.parse(new TextDecoder().decode(files.get("plugin.json")!)),
