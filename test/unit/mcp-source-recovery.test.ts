@@ -4,7 +4,13 @@ import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { EngineEvent, EventSink } from "../../src/engine/types.ts";
 import { INFRA_ERROR_META_KEY, SKILL_ACTIVATED_META_KEY } from "../../src/engine/types.ts";
 import { McpSource, type McpTransportMode, policyFor } from "../../src/tools/mcp-source.ts";
-import { TASKS_EXTENSION_ID, type TaskClient } from "../../src/tools/mcp-task-client.ts";
+import {
+  TASKS_EXTENSION_ID,
+  type TaskClient,
+  type TaskWire,
+  TaskWireError,
+  taskClientFor,
+} from "../../src/tools/mcp-task-client.ts";
 import { RemoteResponseTooLargeError } from "../../src/tools/response-budget.ts";
 import type { WorkspaceOAuthProvider } from "../../src/tools/workspace-oauth-provider.ts";
 import { payloadsOf } from "../helpers/engine-events.ts";
@@ -210,9 +216,70 @@ describe("execute (tools/call) — unified recovery", () => {
     }
   });
 
-  // Transport-shaped fixtures, deliberately. A plain `new Error("Session not
-  // found")` or an `McpError` would be server-authored text, which must NOT earn
-  // the marker — see the negative table below. Each of these is a throw the
+  // Task creation refused with connector-written text, from each producer. The
+  // task wire rejects a JSON-RPC error answering `tools/call` as a
+  // `TaskWireError`. A `TaskClient` may instead report the failure as an
+  // `error` first message, which `startToolAsTask` rethrows as a
+  // `TaskCreationRejectedError`. Neither earns the marker.
+  const CREATION_REFUSALS: ReadonlyArray<[string, (message: string) => TaskClient]> = [
+    [
+      "the task wire rejects tools/call",
+      (message) =>
+        taskClientFor(
+          stub<TaskWire>({
+            source: "svc",
+            request: () => Promise.reject(new TaskWireError(-32603, message)),
+          }),
+        ),
+    ],
+    [
+      "the task client yields an error first",
+      (message) =>
+        stub<TaskClient>({
+          callToolStream: async function* () {
+            yield { type: "error", error: { message } };
+          },
+        }),
+    ],
+  ];
+  for (const [producer, clientFor] of CREATION_REFUSALS)
+    for (const message of [
+      "Rate limit exceeded for this account",
+      "Session not found in my application db",
+      "Service Unavailable from upstream vendor",
+    ]) {
+      it(`does not mark a task-creation refusal when ${producer}: ${message}`, async () => {
+        const source = remoteSource({});
+        const internal = mcpSourceInternals(source);
+        internal.protocolEra = "modern";
+        internal.client.getServerCapabilities = () => ({
+          extensions: { [TASKS_EXTENSION_ID]: {} },
+        });
+        internal.cachedTools = [
+          {
+            name: "svc__long_job",
+            description: "",
+            inputSchema: { type: "object" },
+            source: "mcp:svc",
+          },
+        ];
+        internal.taskClient = clientFor(message);
+        const restart = spyRestart(source, false);
+        try {
+          const result = await source.execute("long_job", {});
+          expect(result.isError).toBe(true);
+          expect(JSON.stringify(result.content)).toContain(message);
+          expect(result._meta?.[INFRA_ERROR_META_KEY]).toBeUndefined();
+          expect(restart).not.toHaveBeenCalled();
+        } finally {
+          restart.mockRestore();
+        }
+      });
+    }
+
+  // Transport-shaped fixtures, deliberately. A `ProtocolError` or a refused task
+  // creation carries server-authored text and must NOT earn the marker — see
+  // the negative cases above and below. Each of these is a throw the
   // transport itself builds: an HTTP status, or a socket failure.
   const INFRA_CLASSES: ReadonlyArray<[string, () => unknown]> = [
     [

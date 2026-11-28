@@ -210,16 +210,16 @@ export const NON_ADVANCING_META_KEY = "ai.nimblebrain/non-advancing";
  * controls both:
  *
  *   - the `_meta` key, stripped from anything arriving over the wire;
- *   - the DECISION, which additionally refuses any `McpError` — three of the
- *     allowlisted classes are matched by regex over the server's own error text,
- *     so a JSON-RPC error the server authored never earns the marker however its
+ *   - the DECISION, which additionally refuses the throw types that carry a
+ *     server's answer: a `ProtocolError`, a `TaskWireError` (a JSON-RPC error on
+ *     the task wire), and a refused task creation. Three of the allowlisted
+ *     classes are matched by regex over the server's own error text, so a
+ *     JSON-RPC error the server authored never earns the marker however its
  *     message is spelled.
  *
- * That second condition is a denylist of one type, not a proof of transport
- * origin. Residual, deliberately accepted: a bare `Error` carrying server text
- * still qualifies — `startToolAsTask` re-throws a task-creation failure that way
- * (#838). An allowlist over throw types would drop `fetch failed` and reset
- * sockets, which is a worse trade.
+ * That second condition is a denylist of known server-answer types, not a proof
+ * of transport origin. An allowlist over throw types would drop `fetch failed`
+ * and reset sockets, which is a worse trade.
  */
 export const INFRA_ERROR_META_KEY = "ai.nimblebrain/infra-error";
 
