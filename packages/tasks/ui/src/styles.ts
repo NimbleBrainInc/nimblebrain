@@ -314,7 +314,6 @@ fieldset.filter-bar { border: none; min-width: 0; }
   font-size: var(--font-text-xs-size); line-height: var(--font-text-xs-line-height);
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-x: hidden; overflow-y: auto;
 }
-.assess-reason { color: var(--color-text-warning); margin-bottom: 6px; }
 .tool-calls { list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
 .tool-call > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 0; }
 .tool-name { font-family: var(--font-mono); font-size: var(--font-text-xs-size); }
@@ -372,7 +371,6 @@ fieldset.filter-bar { border: none; min-width: 0; }
 .batch-counts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0; font-size: var(--font-text-xs-size); color: var(--color-text-secondary); }
 .batch-count-pass { color: var(--color-text-success); }
 .batch-count-fail { color: var(--color-text-danger); }
-.batch-count-uncertain { color: var(--color-text-warning); }
 .batch-note { color: var(--color-text-secondary); margin-bottom: 10px; }
 .batch-filter { display: flex; align-items: center; gap: var(--inline); color: var(--color-text-secondary); font-size: var(--font-text-xs-size); }
 .batch-table { width: 100%; border-collapse: collapse; }

@@ -89,6 +89,8 @@ export function due(
   const now = Date.parse(args.now);
   const until = Date.parse(args.until);
   if (args.cursor === undefined) prune(tx, now, retentionMs);
+  const seen = tx.ws.state.hostNow;
+  if (seen === undefined || Date.parse(seen) < now) tx.ws.state.hostNow = iso(now);
   for (const task of allTasks(tx.ws.state)) anchor(tx, task, now);
   const all = [...scheduledOccurrences(tx, until), ...requestedOccurrences(tx, until)].sort(
     (a, b) => sortKey(a).localeCompare(sortKey(b)),
@@ -608,7 +610,7 @@ function applyToTask(task: TaskDef, run: RunRecord, outcome: Outcome): Notice[] 
   const ended = Date.parse(outcome.endedAt);
   if (task.inFlight === run.id) delete task.inFlight;
   task.runCount++;
-  addUsage(task, Date.parse(outcome.startedAt), run.inputTokens, run.outputTokens);
+  addUsage(task, Date.parse(run.startedAt ?? outcome.startedAt), run.inputTokens, run.outputTokens);
   const notices = run.batchId === undefined ? applyToSchedule(task, run, outcome, ended) : [];
   const spent = budgetSpent(task, ended) ?? budgetStop(task, run);
   if (spent && disable(task, spent, outcome.endedAt))

@@ -308,6 +308,15 @@ function schemaFail(errors: string[], at: string): Assessment {
 }
 
 /**
+ * When the run started: the outcome's `startedAt`, except for an interrupted run the host
+ * closes after its claim was lost. That host saw nothing of the run, so it reports an
+ * instant of its own; the run's start is the `now` its `begin_run` recorded.
+ */
+function startOf(run: RunRecord, outcome: Outcome): string {
+  return outcome.error?.code === "interrupted" && run.startedAt ? run.startedAt : outcome.startedAt;
+}
+
+/**
  * The ended record of `run` from the host's outcome, and its result. `outputSchema` is
  * the one its work spec carried.
  */
@@ -325,7 +334,7 @@ export function recordOutcome(
   const record: RunRecord = {
     ...run,
     status,
-    startedAt: outcome.startedAt,
+    startedAt: startOf(run, outcome),
     completedAt: outcome.endedAt,
     stopReason: outcome.stopReason,
     inputTokens: outcome.usage.inputTokens,

@@ -48,7 +48,8 @@ Every decision is taken on a host instant: `due`'s `now` and `until`, `begin_run
 `offer_event`'s `now`, an outcome's `startedAt`/`endedAt`. The plugin's own clock only stamps
 `createdAt`/`updatedAt`/`requestedAt` and renders `upcoming`'s window and `stats`' default
 `since`. A schedule check that needs no clock (an unknown timezone, a cron that matches no
-date) is decided at write time. A once's lateness is decided only on the `due` that would
+date) is decided at write time, and so is a once at or before the latest `due`'s `now`, a
+host instant already passed. A once's lateness is decided only on the `due` that would
 produce it: whether the host was down at its time is knowable only there.
 
 ## How the run flow is kept (`src/flow.ts`)
@@ -83,7 +84,8 @@ produce it: whether the host was down at its time is knowable only there.
   definition's limits, model, thinking effort, spend accounts (`task-budget:<uid>@<window>:<unit>`
   per token cap, `task-batch:<batch id>` in USD), `exclusiveKey: task:<uid>` (none for a batch
   run) and the trigger. No prompt text wraps any of it.
-- **`end_run`** derives the record from the outcome (`src/runs.ts`): status, execution and
+- **`end_run`** derives the record from the outcome (`src/runs.ts`): its start (the outcome's,
+  except an `interrupted` close keeps `begin_run`'s `now`, since that host never saw the run), status, execution and
   label, unrecovered tool failures, the output-schema verdict; then the task's state: run count,
   budget window usage, last run, the failure streak (backoff, auto-disable, the one run-failed
   notice per stretch), a once retired, the next occurrence; then the batch's item.
@@ -141,10 +143,16 @@ the sidebar placement (`HOST_META`), through the server SDK's `declareHostMeta`.
   raises a notice.
 - **`run` answers at once** with `{ runId, taskId }`; the run is queued and followed with
   `run_result`. No queue position, no synchronous wait, no MCP Tasks handle.
-- **Instants are the host's.** A schedule is placed on the next `due`, not at write time; a
-  past `at` is accepted at write and judged on the `due` that would produce it: within its
-  grace it is listed and runs, past it it is missed. A once produced in time runs however long
-  the queue holds it; only one first seen past its grace (the host was down) is missed.
+- **`run` refuses a task that already has a run** (`activeRunOf`, `src/records.ts`): one
+  outside a batch running, or a `run` still queued, is `conflict` naming it, so the caller
+  learns at once. The claim's `Already running` skip stays as the backstop for what the
+  call cannot see (a scheduled or event run that begins first).
+- **Instants are the host's.** A schedule is placed on the next `due`, not at write time. An
+  `at` at or before the latest `now` a `due` gave (`state.hostNow`) is refused at write
+  (`invalid_input`): the host's clock has passed it. A later `at` is judged on the `due` that
+  would produce it: within its grace it is listed and runs, past it it is missed. A once
+  produced in time runs however long the queue holds it; only one first seen past its grace
+  (the host was down) is missed.
 - **Budget windows are UTC calendar days and months.** A spent window refuses every claim
   (recorded skipped), whatever triggered it.
 - **`grant_invalid` and `membership_revoked` disable the definition at once** with a notice; a

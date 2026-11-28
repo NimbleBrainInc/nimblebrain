@@ -83,6 +83,24 @@ export function runningRunOf(
   );
 }
 
+/**
+ * The run that keeps `run` from asking for another of the task: one outside a batch
+ * running (whatever started it), or asked for by a person and still queued. An event
+ * run waiting out its debounce is not one: a run asked for now goes before it.
+ */
+export function activeRunOf(state: WorkspaceState, uid: string): RunRecord | undefined {
+  return (
+    runningRunOf(state, uid) ??
+    Object.values(state.open).find(
+      (r) =>
+        r.taskUid === uid &&
+        r.batchId === undefined &&
+        r.status === "queued" &&
+        r.trigger === "manual",
+    )
+  );
+}
+
 /** Turn a task off with a reason. Returns whether it was on. */
 export function disable(task: TaskDef, reason: string, at: string): boolean {
   if (!task.enabled) return false;

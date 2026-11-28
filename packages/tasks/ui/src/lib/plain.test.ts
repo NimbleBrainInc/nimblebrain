@@ -1,17 +1,6 @@
-/** Plain words for reason codes, the one run-time format, and a run's input in a few words. */
+/** The one run-time format, and a run's input in a few words. */
 import { describe, expect, test } from "bun:test";
-import { assessmentReasonText, inputSummary, runTime } from "./plain.ts";
-
-describe("assessmentReasonText", () => {
-  test("each known code reads as a sentence, never the code", () => {
-    for (const code of ["schema_invalid", "nothing_to_check", "no_result", "something_new"]) {
-      const text = assessmentReasonText(code);
-      expect(text).not.toContain(code);
-      expect(text).toMatch(/[.]$/);
-    }
-    expect(assessmentReasonText("something_new")).toBe("The result could not be checked.");
-  });
-});
+import { inputSummary, runTime } from "./plain.ts";
 
 describe("runTime", () => {
   const now = new Date("2026-10-04T18:00:00").getTime();

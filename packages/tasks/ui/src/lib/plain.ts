@@ -1,24 +1,4 @@
-/**
- * Plain words for what the plugin reports in codes, the one way the panel
- * writes a run's time, and a run's input in a few words.
- */
-
-/**
- * Why a run's assessment reads as it does, as a sentence. The code itself is
- * never shown; one this screen does not know reads as a generic line.
- */
-export function assessmentReasonText(code: string): string {
-  switch (code) {
-    case "schema_invalid":
-      return "The result doesn't match the task's output schema.";
-    case "nothing_to_check":
-      return "The task has no output schema, so there was nothing to check.";
-    case "no_result":
-      return "The run left no result to check.";
-    default:
-      return "The result could not be checked.";
-  }
-}
+/** The one way the panel writes a run's time, and a run's input in a few words. */
 
 const TIME: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
 

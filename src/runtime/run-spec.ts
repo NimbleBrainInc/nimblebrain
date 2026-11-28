@@ -268,6 +268,12 @@ export interface RunHandle {
    * held the cap and refused the run's next call; absent when the engine did.
    */
   spendAccountId?: string;
+  /**
+   * With a stop by one of the run's own spend accounts: `reserved` when other
+   * runs' reservations held what the run needed and the balance alone would
+   * have paid, else `exhausted` (`SpendHold.stopOf`).
+   */
+  spendStop?: "exhausted" | "reserved";
   /** See `EngineResult.wrapUpLimit`. */
   wrapUpLimit?: WrapUpLimit;
   usage: TurnUsage;

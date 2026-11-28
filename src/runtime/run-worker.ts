@@ -486,8 +486,6 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
    * that closes the run as interrupted releases it when that end lands.
    */
   const holds = new Map<string, { workspaceId: string; release: () => void }>();
-  /** Runs holding each spend account, this process. */
-  const accountHolders = new Map<string, number>();
   const inflight = new Set<Promise<void>>();
   const timers: Array<ReturnType<typeof setInterval>> = [];
   let unsubscribe: (() => void) | null = null;
@@ -829,15 +827,9 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
     const accounts = work.spendAccounts ?? [];
     const anchor: SpendHold | null =
       accounts.length > 0 ? deps.spend.open(accounts, { model: "", rates: null }) : null;
-    for (const a of accounts) accountHolders.set(a.id, (accountHolders.get(a.id) ?? 0) + 1);
     const release = () => {
       if (key) exclusive.delete(key);
       anchor?.release();
-      for (const a of accounts) {
-        const n = (accountHolders.get(a.id) ?? 1) - 1;
-        if (n > 0) accountHolders.set(a.id, n);
-        else accountHolders.delete(a.id);
-      }
     };
     holds.set(runId, { workspaceId, release });
     return true;
@@ -933,7 +925,9 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
     if (stopReason === "complete" && result.wrapUpLimit) detail.wrapUpLimit = result.wrapUpLimit;
     if (stopReason === "spend_limit") {
       if (result.spendAccountId) detail.spendAccountId = result.spendAccountId;
-      detail.spendStop = spendStopOf(result.spendAccountId);
+      // The door decides it when the account refuses; an account it holds no balance for
+      // (the model gateway's own) could not pay.
+      detail.spendStop = result.spendStop ?? "exhausted";
     }
     if (result.skillsDelivered?.length) {
       detail.skillsDelivered = result.skillsDelivered.map((s) => ({
@@ -943,17 +937,6 @@ export function createRunWorker(deps: RunWorkerDeps): RunWorker {
       }));
     }
     return detail;
-  }
-
-  /**
-   * Whether a spend stop was the account running out, or other runs'
-   * reservations holding what was left: `reserved` when another run in flight
-   * here names the account and its balance is still above zero.
-   */
-  function spendStopOf(accountId: string | undefined): "exhausted" | "reserved" {
-    if (!accountId) return "exhausted";
-    const others = (accountHolders.get(accountId) ?? 0) > 1;
-    return others && (deps.spend.balance(accountId) ?? 0) > 0 ? "reserved" : "exhausted";
   }
 
   // ── End ────────────────────────────────────────────────────────────────────

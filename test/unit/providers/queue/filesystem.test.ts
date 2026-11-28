@@ -138,16 +138,32 @@ describe("filesystem work queue", () => {
       const first = fresh(clock, dir);
       await first.queue.enqueue(item("a", "one"));
       await first.queue.enqueue(item("b", "two"));
-      const held = await first.queue.claim(W);
-      if (!held) throw new Error("expected a claim");
+      const done = await first.queue.claim(W);
+      if (!done) throw new Error("expected a claim");
+      await first.queue.complete(done);
       await first.queue.close();
 
       const { queue } = fresh(clock, dir);
       await queue.enqueue(item("c", "three"));
       expect((await queue.claim(W))?.payload).toBe("two");
       expect((await queue.claim(W))?.payload).toBe("three");
-      await queue.extend(held, 10_000);
-      await queue.complete(held);
+    });
+
+    test("a claim held when the queue opens is due at once, and its next claim supersedes it", async () => {
+      const clock = createTestClock();
+      const dir = tempDir();
+      const first = fresh(clock, dir);
+      await first.queue.enqueue(item("a", "running"));
+      const held = await first.queue.claim({ ...W, leaseMs: 60_000 });
+      if (!held) throw new Error("expected a claim");
+      // The process stops without settling; the next one opens a moment later.
+      await first.queue.close();
+      clock.advance(1_000);
+
+      const { queue } = fresh(clock, dir);
+      const again = await queue.claim(W);
+      expect([again?.id, again?.attempt, again?.token]).toEqual([held.id, 2, held.token + 1]);
+      await expect(queue.extend(held, 1_000)).rejects.toMatchObject({ reason: "superseded" });
     });
   });
 

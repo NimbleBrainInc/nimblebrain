@@ -39,6 +39,9 @@ import {
  *   naming this process's pid, and refuses while another live process on this
  *   host holds it. A lock whose process is gone (a crash, a kill) is taken
  *   over. Hosts sharing a volume are outside what the lock can check.
+ * - **A claim held at open ends its lease then.** Its holder is a process that
+ *   is gone, so nothing will extend it; its item is due at once, and its next
+ *   claim supersedes the old one with a higher token.
  * - **Holding the lock, the process keeps every item in memory** as well as on
  *   disk, so a claim reads no files. Each method decides and writes in one
  *   synchronous step, so two calls in the process never interleave. Claims
@@ -234,6 +237,11 @@ function dueTime(item: StoredItem): number | null {
   return null;
 }
 
+/** Whether the item is claimed under a lease that runs past `at`. */
+function heldPast(item: StoredItem, at: number): boolean {
+  return item.state === "claimed" && !!item.leaseUntil && Date.parse(item.leaseUntil) > at;
+}
+
 function isTerminal(item: StoredItem): boolean {
   return item.state === "completed" || item.state === "failed";
 }
@@ -330,6 +338,15 @@ export function createFilesystemWorkQueue(options: FilesystemWorkQueueOptions): 
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
     items.delete(name);
+  }
+
+  // A claim found at open was held by a process that is gone: this one holds the lock, which
+  // no other live process does. Its lease ends now, so its item is due at once rather than
+  // when a lease nobody can extend runs out. The item, attempt and token are unchanged, so
+  // the next claim supersedes it with a higher token, as for any lease that expired.
+  const opened = now();
+  for (const [name, item] of [...items]) {
+    if (heldPast(item, opened)) replace(name, { ...item, leaseUntil: iso(opened) });
   }
 
   function isExpired(item: StoredItem, at: number): boolean {

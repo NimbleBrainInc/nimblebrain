@@ -29,7 +29,6 @@ export async function readResult(
           taskId: run.taskId,
           execution: run.execution,
           label: run.label,
-          ...(run.assessment ? { assessment: run.assessment } : {}),
         }
       : null;
     return { run, result, open: false };

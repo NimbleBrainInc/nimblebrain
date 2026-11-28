@@ -1381,14 +1381,16 @@ async function onceCases(c: FullCtx): Promise<void> {
   await h.run(
     "a once first seen by due far past its time was missed: recorded skipped, never listed",
     async () => {
+      // Saved ahead of the host's latest now (the last case's), then first seen far past it.
+      const when = t + 2 * HOUR + LATE;
       const taskId = await createTask(
         person,
-        { name: taskName(audit, "missed-once"), schedule: { at: at(t + 2 * HOUR) } },
+        { name: taskName(audit, "missed-once"), schedule: { at: at(when) } },
         "m",
       );
-      const now = t + 2 * HOUR + LATE;
+      const now = when + LATE;
       const listed = (await host.dueAll(now, now + DAY)).occurrences;
-      assert(!listed.some((o) => o.notBefore === at(t + 2 * HOUR)), "the missed once is listed");
+      assert(!listed.some((o) => o.notBefore === at(when)), "the missed once is listed");
       const status = await okCall(person, "status", { taskId });
       eq(obj(obj(status.task, "task").onceDone, "onceDone").outcome, "missed", "onceDone");
       const runs = list(status.recentRuns, "recentRuns");
@@ -1397,6 +1399,27 @@ async function onceCases(c: FullCtx): Promise<void> {
         ["skipped"],
         "the missed occurrence's record",
       );
+    },
+  );
+  await h.run(
+    "a once at or before the latest now due gave is invalid_input at create and update",
+    async () => {
+      const latest = t + 2 * HOUR + 2 * LATE;
+      const past = await person.call("create", {
+        manifest: { name: taskName(audit, "past-once"), schedule: { at: at(latest) } },
+        body: "p",
+      });
+      expectPublicError(past, "invalid_input", "create");
+      const taskId = await createTask(
+        person,
+        { name: taskName(audit, "moved-once"), schedule: { at: at(latest + DAY) } },
+        "p",
+      );
+      const moved = await person.call("update", {
+        taskId,
+        manifest: { schedule: { at: at(latest - HOUR) } },
+      });
+      expectPublicError(moved, "invalid_input", "update");
     },
   );
 }
@@ -1408,10 +1431,11 @@ async function pagingCases(c: FullCtx): Promise<void> {
   await h.run(
     "due pages by limit and cursor, repeating now and until, no repeats or skips",
     async () => {
-      const taskId = await createTask(person, { name: taskName(audit, "paging") }, "p");
-      const runIds: string[] = [];
-      for (let i = 0; i < 5; i++)
-        runIds.push(str((await okCall(person, "run", { taskId })).runId, "runId"));
+      // One run per task: a task with a run queued refuses another (§4).
+      for (let i = 0; i < 5; i++) {
+        const taskId = await createTask(person, { name: taskName(audit, `paging ${i}`) }, "p");
+        await okCall(person, "run", { taskId });
+      }
       const keys: string[] = [];
       let cursor: unknown;
       let pages = 0;
@@ -1525,8 +1549,9 @@ async function fencingCases(c: FullCtx): Promise<void> {
   await h.run(
     "end_run from the interrupted run's token replaces the provisional record",
     async () => {
+      // The host closing it never saw it start: its outcome's start is the close's.
       const o = outcome({
-        start: t,
+        start: t + 3 * MINUTE,
         stop: "error",
         error: { code: "interrupted", transient: true },
       });
@@ -1539,6 +1564,7 @@ async function fencingCases(c: FullCtx): Promise<void> {
       assert(!(await host.dueAll(t, t + DAY)).cancel.includes(runId), "the ended run in cancel");
       const ran = obj((await runResult(person, runId)).run, "run");
       assert(typeof ran.completedAt === "string", "the ended run has no completedAt");
+      eq(ran.startedAt, at(t), "the start, its begin_run's now");
     },
   );
   await h.run(
@@ -1636,6 +1662,7 @@ async function runFlowCases(c: FullCtx): Promise<void> {
   await runOutcomeCases(c, host, person, taskId);
   await runPagingCase(c, person, taskId, runId);
   await idempotencyCases(c, host, person, taskId);
+  await activeRunCase(c, host, person, taskId);
   await h.run("status and list show the task", async () => {
     const status = await okCall(person, "status", { taskId });
     eq(obj(status.task, "task").prompt, prompt, "prompt");
@@ -1751,6 +1778,25 @@ async function idempotencyCases(
     expectPublicError(other, "conflict", "run");
     await okCall(person, "cancel", { runId: first.runId });
   });
+}
+
+async function activeRunCase(c: FullCtx, host: Host, person: Conn, taskId: string): Promise<void> {
+  const t = CLOCK_START + 2 * HOUR;
+  await c.h.run(
+    "run of a task with a run queued or running is conflict, asking for nothing",
+    async () => {
+      const { runId, occ } = await requestRun(host, person, taskId, t);
+      const made = await occurrencesOf(host, t, async () =>
+        expectPublicError(await person.call("run", { taskId }), "conflict", "run while queued"),
+      );
+      eq(made, [], "occurrences a refused run made");
+      await beginRun(host, occ, 1, t);
+      expectPublicError(await person.call("run", { taskId }), "conflict", "run while running");
+      await host.end(runId, 1, outcome({ start: t }));
+      const next = str((await okCall(person, "run", { taskId })).runId, "runId");
+      await okCall(person, "cancel", { runId: next });
+    },
+  );
 }
 
 // ── Cancel ───────────────────────────────────────────────────────────────
@@ -2225,7 +2271,9 @@ async function retentionCases(c: FullCtx): Promise<void> {
     await host.end(ended.runId, 1, outcome({ start: t, output: "old" }));
     const open = await requestRun(host, person, taskId, t + MINUTE);
     await beginRun(host, open.occ, 1, t + MINUTE);
-    const queued = str((await okCall(person, "run", { taskId })).runId, "runId");
+    // Another task: one with a run running refuses a second (§4).
+    const other = await createTask(person, { name: taskName(audit, "ret queued") }, "q");
+    const queued = str((await okCall(person, "run", { taskId: other })).runId, "runId");
     const future = t + 50 * 365 * DAY;
     await host.due(future, future + DAY);
     expectPublicError(

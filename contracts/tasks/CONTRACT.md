@@ -123,8 +123,10 @@ The public tools' behaviour, where a schema cannot state it.
 - **A one-off** is a task with `kind: "oneoff"`, created by `run` or `run_batch` from an inline
   `definition`. With an `idempotencyKey`, its id is derived from the key.
 - **`run`** asks for a run and answers at once with `{ runId, taskId }`; `run_result` reads its
-  state and `cancel` stops it. A run refused when it is claimed (already running, a spent
-  budget) is recorded `skipped` with its reason. Over MCP's task augmentation, `run` is a task
+  state and `cancel` stops it. **One run per task at a time**: `run` of a task that has a run
+  running, or one a `run` asked for still queued, fails `conflict` naming that run, and asks
+  for nothing (a batch's runs and an event run not yet due do not count). A run refused when
+  it is claimed (one began first, a spent budget) is recorded `skipped` with its reason. Over MCP's task augmentation, `run` is a task
   whose id is the run id and whose result is `run_result`'s answer once the run has ended; that
   binding is the host's.
 - **One status vocabulary.** A run's `execution` (`queued`, `running`, `skipped`, `completed`,
@@ -251,6 +253,8 @@ runs**, runs it, and enforces every limit. Nothing runs except through this flow
    earlier token). The host then stops that run if it still runs, and ends it with `end_run`,
    `stopReason: "error"`, `error: { code: "interrupted", transient: true }` and the usage and
    cost its metering recorded for the run, which closes the record, its budget and its notices.
+   That host never saw the run start, so the record keeps the `now` of the `begin_run` that
+   answered it as its start, whatever the outcome's `startedAt` says.
    A scheduled run that crashed after `begin_run` is recorded, never run again: running it
    again would repeat what it already sent or wrote.
 
@@ -326,6 +330,10 @@ late, spent, expired, or allowed.
 
 - **A schedule saved or changed is anchored on the `now` of the next `due`** for its workspace:
   that call computes its first occurrence.
+- **A once already past is refused at write.** `create` and `update` fail `invalid_input` for
+  an `at` at or before the latest `now` a `due` gave for the workspace: the host's clock has
+  passed it, so it could only be missed. A later `at` is judged on the next `due` as any once
+  is. A workspace no `due` has reached yet refuses none.
 - **Retention is judged on `due`'s `now`** (§5.1).
 - **Budget periods are UTC calendar days and months**, judged on the host's `now`.
 - **Lateness, backoff and the fire ceiling** are judged on the `now` of the call that decides

@@ -52,7 +52,8 @@ They are listed on the **Scheduled** page. Say "run" for one execution.
 - **Run now:** `tasks__run {taskId}` answers at once with the run's `runId`;
   the run is queued and starts when a slot is free. Follow it with
   `tasks__run_result {runId}` until its `execution` is no longer `queued` or
-  `running`. Never call `tasks__run` again for a run you are following.
+  `running`. Never call `tasks__run` again for a run you are following: a task
+  with a run queued or running answers `conflict` naming that run.
 - **Status and next run:** `tasks__status {taskId}`.
 - Say it is done only after the tool's answer shows it.
 
