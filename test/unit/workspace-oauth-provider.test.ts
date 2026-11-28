@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { refreshAuthorization } from "@modelcontextprotocol/client";
 import type { OAuthClientInformationFull, OAuthTokens } from "@modelcontextprotocol/server";
 import { log } from "../../src/observability/log.ts";
-import { requireCredentialStore } from "../../src/tools/credential-store.ts";
+import { requireCredentialStore, setCredentialStore } from "../../src/tools/credential-store.ts";
+import {
+  createCredentialStore,
+  registerBuiltinCredentialStoreBackends,
+} from "../../src/tools/credential-store-backend.ts";
 import {
   clearMcpOAuthAuthLost,
   hasMcpOAuthAuthLost,
@@ -757,6 +761,72 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     return p2.tokens();
   }
 
+  for (const unreadable of ["tokens", "client"] as const) {
+    it(`clears an unreadable sealed ${unreadable} record so the connection can reconnect`, async () => {
+      const keyA = "NB_TEST_OAUTH_DISCONNECT_KEY_A";
+      const keyB = "NB_TEST_OAUTH_DISCONNECT_KEY_B";
+      const previousA = process.env[keyA];
+      const previousB = process.env[keyB];
+      process.env[keyA] = Buffer.alloc(32, 0x4a).toString("base64");
+      process.env[keyB] = Buffer.alloc(32, 0x5b).toString("base64");
+      try {
+        registerBuiltinCredentialStoreBackends();
+        const sealedStore = (keyEnv: string) =>
+          createCredentialStore({
+            workDir,
+            secrets: { backend: "file", config: { seal: { keyEnv } } },
+          });
+        setCredentialStore(sealedStore(keyA));
+        await connectedProvider();
+
+        setCredentialStore(sealedStore(keyB));
+        const scope = { kind: "workspace" as const, wsId: "ws_0076759dbbe19fcc" };
+        if (unreadable === "client") {
+          await store().put(
+            scope,
+            mcpOAuthKey("granola", "tokens"),
+            JSON.stringify({ access_token: "acc-tok", token_type: "Bearer" }),
+          );
+        }
+        const p = new WorkspaceOAuthProvider({
+          owner: { type: "workspace", wsId: scope.wsId },
+          serverName: "granola",
+          callbackUrl: CALLBACK,
+          allowInsecureRemotes: true,
+        });
+        const { fetch: f, calls } = makeFetcher({});
+
+        const result = await p.revokeAndDeleteTokens({
+          connectorUrl: "http://localhost:39990/mcp",
+          fetchImpl: f,
+        });
+
+        expect(result.deletedLocal).toBe(true);
+        expect(result.revoked).toEqual({});
+        expect(result.error).toContain("could not be opened");
+        expect(calls).toEqual([]);
+        expect((await store().list(scope)).map((entry) => entry.key)).toEqual([]);
+
+        const reconnect = new WorkspaceOAuthProvider({
+          owner: { type: "workspace", wsId: scope.wsId },
+          serverName: "granola",
+          callbackUrl: CALLBACK,
+        });
+        await reconnect.saveClientInformation({
+          client_id: "new-client",
+          redirect_uris: [CALLBACK],
+        });
+        await reconnect.saveTokens({ access_token: "new-token", token_type: "Bearer" });
+        expect((await reconnect.tokens())?.access_token).toBe("new-token");
+      } finally {
+        if (previousA === undefined) delete process.env[keyA];
+        else process.env[keyA] = previousA;
+        if (previousB === undefined) delete process.env[keyB];
+        else process.env[keyB] = previousB;
+      }
+    });
+  }
+
   for (const [label, target] of [
     ["another origin", "http://localhost:39995/collect"],
     ["the same origin", "http://localhost:39990/oauth/revoke-v2"],
@@ -894,6 +964,40 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(result.revoked).toEqual({});
     // No revocation discovery attempted when there are no tokens.
     expect(calls.length).toBe(0);
+  });
+
+  it("clears local credentials when revocation discovery is aborted", async () => {
+    const abort = new AbortController();
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      serverName: "granola",
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      abortSignal: abort.signal,
+    });
+    await p.saveClientInformation({ client_id: "test-client", redirect_uris: [CALLBACK] });
+    await p.saveTokens({ access_token: "acc-tok", token_type: "Bearer" });
+    const stalled = fakeFetch(
+      (_url, init) =>
+        new Promise<Response>((_, reject) => {
+          const signal = init?.signal;
+          if (!signal) return reject(new Error("missing abort signal"));
+          if (signal.aborted) return reject(new Error("aborted"));
+          signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    );
+    const timeout = setTimeout(() => abort.abort(), 20);
+    try {
+      const result = await p.revokeAndDeleteTokens({
+        connectorUrl: "http://localhost:39990/mcp",
+        fetchImpl: stalled,
+      });
+      expect(result.deletedLocal).toBe(true);
+      expect(result.revoked).toEqual({});
+      expect(await storedTokensAfterRevoke()).toBeUndefined();
+    } finally {
+      clearTimeout(timeout);
+    }
   });
 
   it("revokes refresh + access via discovered endpoint, then deletes locally", async () => {

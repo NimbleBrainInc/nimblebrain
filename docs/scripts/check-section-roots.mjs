@@ -7,8 +7,9 @@
 // directory that holds pages but has no `index.html` of its own.
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const dist = new URL('../dist/', import.meta.url).pathname;
+const dist = fileURLToPath(new URL('../dist/', import.meta.url));
 
 // Build output that is not a docs section.
 const notSections = new Set(['_astro', 'pagefind']);

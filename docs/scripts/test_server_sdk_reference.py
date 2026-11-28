@@ -36,9 +36,9 @@ def _package(tmp_path: Path, source: str) -> Path:
     module_dir = package_dir / "src" / reference.PACKAGE
     module_dir.mkdir(parents=True)
     (package_dir / "pyproject.toml").write_text(
-        '[project]\nname = "fixture"\nversion = "1.2.3"\n'
+        '[project]\nname = "fixture"\nversion = "1.2.3"\n', encoding="utf-8"
     )
-    (module_dir / "__init__.py").write_text(source)
+    (module_dir / "__init__.py").write_text(source, encoding="utf-8")
     return package_dir
 
 
@@ -48,10 +48,20 @@ def test_documented_package_writes_its_pages(tmp_path: Path) -> None:
     assert reference.main(_package(tmp_path, DOCUMENTED), out, PAGES) == 0
 
     assert sorted(page.name for page in out.iterdir()) == ["core.md", "index.md"]
-    core = (out / "core.md").read_text()
+    core = (out / "core.md").read_text(encoding="utf-8")
     assert "### `Thing`" in core
     assert "Make a thing." in core
     assert "version 1.2.3" in core
+
+
+def test_unicode_docstrings_and_summaries_are_written_as_utf8(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    source = DOCUMENTED.replace('"""A thing."""', '"""A thing ∪ another."""')
+    pages = [("", "core", reference.PACKAGE, "fixture", "A fixture ∪ another.")]
+
+    assert reference.main(_package(tmp_path, source), out, pages) == 0
+    assert "A thing ∪ another." in (out / "core.md").read_text(encoding="utf-8")
+    assert "A fixture ∪ another." in (out / "index.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
