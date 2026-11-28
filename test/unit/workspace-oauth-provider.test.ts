@@ -896,6 +896,40 @@ describe("WorkspaceOAuthProvider — revokeAndDeleteTokens", () => {
     expect(calls.length).toBe(0);
   });
 
+  it("clears local credentials when revocation discovery is aborted", async () => {
+    const abort = new AbortController();
+    const p = new WorkspaceOAuthProvider({
+      owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },
+      serverName: "granola",
+      callbackUrl: CALLBACK,
+      allowInsecureRemotes: true,
+      abortSignal: abort.signal,
+    });
+    await p.saveClientInformation({ client_id: "test-client", redirect_uris: [CALLBACK] });
+    await p.saveTokens({ access_token: "acc-tok", token_type: "Bearer" });
+    const stalled = fakeFetch(
+      (_url, init) =>
+        new Promise<Response>((_, reject) => {
+          const signal = init?.signal;
+          if (!signal) return reject(new Error("missing abort signal"));
+          if (signal.aborted) return reject(new Error("aborted"));
+          signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    );
+    const timeout = setTimeout(() => abort.abort(), 20);
+    try {
+      const result = await p.revokeAndDeleteTokens({
+        connectorUrl: "http://localhost:39990/mcp",
+        fetchImpl: stalled,
+      });
+      expect(result.deletedLocal).toBe(true);
+      expect(result.revoked).toEqual({});
+      expect(await storedTokensAfterRevoke()).toBeUndefined();
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
   it("revokes refresh + access via discovered endpoint, then deletes locally", async () => {
     const p = new WorkspaceOAuthProvider({
       owner: { type: "workspace", wsId: "ws_0076759dbbe19fcc" },

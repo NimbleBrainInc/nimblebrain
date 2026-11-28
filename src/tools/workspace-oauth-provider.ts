@@ -206,8 +206,8 @@ export interface WorkspaceOAuthProviderOptions {
    * AbortSignal threaded into every outbound `fetch()` the provider
    * makes — the redirect-probe loop in `redirectToAuthorization` and
    * the revocation requests in `revokeAndDeleteTokens`. Lifecycle
-   * aborts this when its 15s `startAuth` timeout fires (or when the
-   * race resolves cleanly), so an unresponsive auth server's TCP
+   * aborts this when a `startAuth` attempt fails or Disconnect's 15s
+   * revocation deadline expires, so an unresponsive auth server's TCP
    * read doesn't outlive the user's intent.
    *
    * Optional — flows started outside the lifecycle path (CLI utilities,
