@@ -224,6 +224,7 @@ export function loadConfig(flags: CliFlags = {}): RuntimeConfig {
     workspaces: fileConfig.workspaces as RuntimeConfig["workspaces"],
     execution: fileConfig.execution as RuntimeConfig["execution"],
     plugins: fileConfig.plugins as RuntimeConfig["plugins"],
+    catalogs: fileConfig.catalogs as RuntimeConfig["catalogs"],
     usage: fileConfig.usage as RuntimeConfig["usage"],
     notifications: fileConfig.notifications as RuntimeConfig["notifications"],
     // Pass config path for connector install/uninstall persistence

@@ -31,8 +31,8 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   `bun run emit:plugin-extension`; `bun run check:plugin-extension` (in `verify:static`)
   fails on drift.
 - **v1 only adds.** Every field is optional and objects are open, so what the catalog emits
-  today (`servers`, `conversationStarters`, and `nimblebrainOnly` in its AI Catalog) stays
-  valid. A rename or removal is a new major directory (`v2/`), never an edit.
+  today (`servers` and `conversationStarters`) stays valid. It describes `plugin.json` only;
+  an AI Catalog entry's extension has its own schema (`src/catalogs/AGENTS.md`). A rename or removal is a new major directory (`v2/`), never an edit.
 - **Each fact has one home.** How a server starts or is reached: `mcp.json`. Its registry
   name: the extension's `servers` (key to name). Its auth and placements: that registry
   entry's `_meta`, or the server's own `ai.nimblebrain/host`, never the extension. Never

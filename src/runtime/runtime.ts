@@ -12,6 +12,12 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
 import { loadBrand } from "../brand/index.ts";
+import {
+  type CatalogListings,
+  createCatalogListings,
+  noCatalogListings,
+} from "../catalogs/reader.ts";
+import { resolveCatalogs } from "../config/catalogs.ts";
 import { isToolVisibleToRole, type ResolvedFeatures, resolveFeatures } from "../config/features.ts";
 import { deriveOverridePath } from "../config/overrides.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../config/privilege.ts";
@@ -808,6 +814,8 @@ export class Runtime {
   /** Which providers the model gateway serves, when there is one (`watchGatewayProviders`). */
   private _gatewayProviders: GatewayProviders | null = null;
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
+  /** The configured catalogs' listings, which Browse reads; see {@link getCatalogListings}. */
+  _catalogListings: CatalogListings = noCatalogListings();
   private _identityProvider: IdentityProvider;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -1125,6 +1133,10 @@ export class Runtime {
     // block over them, read, validated and held to their contracts, so a setup
     // that cannot work refuses the boot here. Nothing is started from the
     // result yet; every plugin turned off reads nothing.
+    // The catalogs Browse lists (ADR-0077). A block that cannot work (a
+    // required catalog without a pin, two catalogs of one name) refuses the boot.
+    const catalogs = resolveCatalogs(config.catalogs, { configPath: config.configPath });
+
     const resolvedPlugins = checkConfiguredPlugins(config.plugins, {
       workDir,
       ...(config.configPath ? { configPath: config.configPath } : {}),
@@ -1366,6 +1378,10 @@ export class Runtime {
       getWorkspaceId,
     );
     rt._hostLoopback = hostLoopback;
+    rt._catalogListings = createCatalogListings({
+      catalogs,
+      cacheDir: join(workDir, "cache", "catalogs"),
+    });
     rt._pluginSkillRoots = pluginSkillRoots;
     rtHolder.rt = rt;
 
@@ -1545,6 +1561,9 @@ export class Runtime {
       // mis-set NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
       // than silent.
       await warnIfCatalogEmpty(rt.getConnectorCatalog());
+      // Read every catalog's listing once in the background, so the first
+      // Browse finds a warm copy and an unreachable catalog is logged at boot.
+      void rt._catalogListings.snapshots();
 
       // Unattended work starts once everything a run reaches is in place.
       await rt._runWorker?.start();
@@ -5906,6 +5925,15 @@ export class Runtime {
    */
   getConnectorCatalog(): ConnectorCatalog {
     return new ConnectorCatalog(catalogLocation(this.getWorkDir()));
+  }
+
+  /**
+   * The configured catalogs' listings (ADR-0077): read, cached and refreshed
+   * for the life of the runtime. Browse is built from these
+   * (`src/catalogs/browse.ts`).
+   */
+  getCatalogListings(): CatalogListings {
+    return this._catalogListings;
   }
 
   /**

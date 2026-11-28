@@ -80,6 +80,7 @@ Nested `AGENTS.md` files (each with a `CLAUDE.md` symlink) hold the rules for on
 |---|---|
 | [`contracts/AGENTS.md`](./contracts/AGENTS.md) | Contracts the kernel consumes: spec and tooling, no runtime dependency on `src/`, one emitted document per version, `emit:contracts` and `check:contracts`, versioning in each `CONTRACT.md`, the host context every contract call carries (`host-context/CONTEXT.md`) |
 | [`schemas/AGENTS.md`](./schemas/AGENTS.md) | The published schemas tree: path = URL, `/<thing>/v<major>/`, every file authored or emitted with `--check`, additive minors in place, breaking change = new major, legacy `/v1/<name>` aliases, runtime validation reads from here |
+| [`src/catalogs/AGENTS.md`](./src/catalogs/AGENTS.md) | The AI Catalog listings in `catalogs`: the one reader, pins, cache and refresh, never fatal; Browse built from listings and never from artifacts, status from `servers[].auth`, the connector-list join install still needs, catalogs side by side, the catalog-entry extension (`emit:catalog-entry-extension`) |
 | [`src/plugins/AGENTS.md`](./src/plugins/AGENTS.md) | One manifest format for catalog and system plugins, the one reader, the additive published extension (`emit:plugin-extension`, `check:plugin-extension`), the default plugins and turning one off, system plugins' skills, system as an operator decision, the contract registry and its markings, the boot check, starting a bound server, its placements from its handshake, result overlays, where the host context is stamped (principal, `unattended`, `grant`), hiding private tools, refusing tools unattended, watching a change hint |
 | [`src/platform/AGENTS.md`](./src/platform/AGENTS.md) | Authoring platform apps and their tools: MCP-native sources, strict input schemas, update tools as patches where `null` clears, named output types, `ui://` MIME type |
 | [`src/runtime/AGENTS.md`](./src/runtime/AGENTS.md) | Run admission at the run-start door: slots, queue, fair share, leases; spend accounts reserved before each model call; the run worker over the tasks contract (due, claim, begin, run, end, notices, event offers) |
@@ -165,6 +166,7 @@ src/
 │   └── gateways/  hosted-MCP vendors that broker nothing and take one account key
 ├── providers/     Infrastructure the kernel uses and no agent calls: interfaces plus local implementations (see providers/AGENTS.md)
 ├── platform/      The kernel's own apps — in-process MCP servers, one directory each (see platform/AGENTS.md)
+├── catalogs/      The AI Catalog listings the operator configures, and Browse built from them (see catalogs/AGENTS.md)
 ├── plugins/       Agent Plugins: the one manifest reader, the ai.nimblebrain extension, the contract registry, operator-configured plugins (see plugins/AGENTS.md)
 ├── tools/         System tool definitions (search, status, manage)
 ├── identity/      Auth adapters (dev, oidc, workos)

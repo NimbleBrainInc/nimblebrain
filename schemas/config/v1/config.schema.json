@@ -590,6 +590,46 @@
         ]
       }
     },
+    "catalogs": {
+      "description": "The AI Catalog listings this instance offers to install from (ADR-0077), side by side with no precedence: Browse lists every catalog's items, each addressed name@catalog. Absent: NimbleBrain's catalog, read at <NB_PLUGIN_CATALOG_URL>/.well-known/ai-catalog.json (https://catalog.nimblebrain.ai by default). An empty list reads no listings; until install reads an item's own archive, the connector list's records still show under the reserved catalog curated. Read from this file only; the override file cannot set it.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Where the listing is read: an https URL (http only to a loopback host) of an AI Catalog document, or a path the operator mounts, either a file holding one or a directory holding ai-catalog.json or .well-known/ai-catalog.json. A relative path resolves against this file's directory."
+          },
+          "policy": {
+            "enum": ["required", "available"],
+            "description": "required: reconciled into every workspace, and must carry sha256. available: offered to install."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "sha256 (lowercase hex) of the listing's bytes. Bytes that do not match are refused and the last good copy is kept. A pinned listing is read once and never refreshed. Required when policy is required."
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+            "maxLength": 64,
+            "description": "The catalog part of an item's address, name@catalog. Default: derived from source (a URL's domain label before its last, e.g. nimblebrain for catalog.nimblebrain.ai; a path's last segment). curated is reserved."
+          },
+          "refreshMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440,
+            "default": 15,
+            "description": "How often an unpinned listing is read again, in minutes. Default 15."
+          }
+        },
+        "required": ["source", "policy"],
+        "additionalProperties": false,
+        "if": { "properties": { "policy": { "const": "required" } }, "required": ["policy"] },
+        "then": { "required": ["sha256"] }
+      }
+    },
     "runs": {
       "description": "Guardrails for unattended runs (a task's runs, and any other run started without a person in the loop): how many the process holds in flight and waiting, across every workspace, and the most any one run may spend. The per-run ceilings bound the caps a run's work names, and the runtime defaults for caps it leaves unset, when the run starts.",
       "type": "object",

@@ -474,7 +474,7 @@ export function ConnectorDirectory({
           installedEntries={installedEntries}
           renderCard={(entry, configurePath) => (
             <DirectoryRow
-              key={entry.id}
+              key={entry.address ?? entry.id}
               entry={entry}
               personal={personalFor(entry, configurePath)}
               configurePath={configurePath}

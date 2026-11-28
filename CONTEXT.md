@@ -258,7 +258,7 @@ connectors added by URL, which are theirs, and system plugins, which share the
 format and reader but are bound by the operator. Today connectors and skills
 install separately, as *Source* and *Skill* describe.
 
-### Catalog *(decided, ADR-0077; not yet built)*
+### Catalog *(ADR-0077; the listing and Browse are built, install from it is not yet)*
 `{source, policy, sha256?}` in the operator's configuration: `source` an AI
 Catalog listing URL or a mounted path, `policy` `required` or `available`
 (*Catalog policy*), `sha256` a pin of the listing, which a `required` catalog

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { CATALOG_CONFIG_KEYS } from "../../src/config/catalogs.ts";
 import { AGENT_RUNTIME_CONFIG_KEYS, EXECUTION_CONFIG_KEYS } from "../../src/config/execution.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import { PLUGIN_CONFIG_KEYS, PLUGIN_SERVER_CONFIG_KEYS } from "../../src/config/plugins.ts";
@@ -72,6 +73,7 @@ const schema = JSON.parse(
         ];
       };
     };
+    catalogs: { items: SchemaObject };
     connectors: SchemaObject & {
       properties: {
         providers: SchemaObject & {
@@ -133,6 +135,10 @@ describe("config schema ↔ plugins config", () => {
     entry.properties.servers.additionalProperties,
     PLUGIN_SERVER_CONFIG_KEYS,
   );
+});
+
+describe("config schema ↔ catalogs config", () => {
+  expectLockstep("catalogs[]", schema.properties.catalogs.items, CATALOG_CONFIG_KEYS);
 });
 
 describe("config schema ↔ model slots", () => {

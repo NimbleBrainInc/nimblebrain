@@ -34,6 +34,8 @@
 
 ### Added
 
+- **Browse is built from AI Catalog listings.** `catalogs` in `nimblebrain.json` names each listing (`{source, policy, sha256?}`, a URL or a mounted path), read live, cached, refreshed every 15 minutes, and shown side by side, each item addressed `name@catalog` with a status from its server's auth; a `required` catalog must be pinned. Default: NimbleBrain's catalog. Install still resolves each row through the connector list. [Docs](https://docs.nimblebrain.ai/config/connectors-catalog/#catalogs-what-browse-lists).
+- **`schemas.nimblebrain.ai/catalog-entry-extension/v1/`** publishes the schema of an AI Catalog entry's `extensions["ai.nimblebrain"]` (`iconUrl`, `category`, `servers` with each server's auth, `nimblebrainOnly`).
 - **The built-in files plugin, bound by default.** `packages/files` implements the files contract (`ai.nimblebrain.files` 1.0): the file tools, records, text extraction, its screen and skill. The runtime takes every upload in through one intake and serves every body through the plugin's `resolve`, moving bytes by short-lived URLs only to destinations the binding authorises. The contract's conformance runner (`contracts/files/runner/conformance.ts`) checks any implementation. [Docs](https://docs.nimblebrain.ai/config/nimblebrain-json/#files-and-attachments).
 - **`plugins.<name>.transferOrigins`** lists the origins (an object store's) a plugin's transfer URLs may point at, beside its own server's.
 - **Browse filters connectors by category.** A catalog entry's optional `_meta["ai.nimblebrain/connector"].category` (display text, such as `"Sales & support"`) appears on the entry's page and as a filter above the list, built from the categories the catalog names; search matches it too. A catalog without categories looks as before ([docs](https://docs.nimblebrain.ai/config/connectors-catalog/)).
@@ -132,6 +134,7 @@
 
 ### Changed
 
+- **Browse hides a brokered connector whose broker this instance does not configure**, since it could never install; it used to show and refuse at install.
 - **Browse lists the pinned plugin catalog.** With no `NB_CURATED_CATALOG_DIR`, the connector list comes from the catalog at `NB_PLUGIN_CATALOG_URL`, verified against `NB_PLUGIN_CATALOG_CONNECTORS_SHA256` and cached in the work directory, so dev, `npx nimblebrain` and the image show one list; a set directory still replaces it ([docs](https://docs.nimblebrain.ai/config/connectors-catalog/#where-the-catalog-lives)).
 - **Task telemetry:** `automation.run_completed` carries no `automation_id` or batch flag, `automation.created` is not sent, and `task.created` reports on every deployment. [Docs](https://docs.nimblebrain.ai/using/telemetry/).
 - **A catalog connector installs from the catalog's entry alone.** `manage_connectors install` resolves a `remote-oauth` entry by its exact id to the instance's catalog entry, on the personal and workspace paths alike; the caller's URL, auth, transport, scopes and authorization parameters are discarded, and an id the catalog does not list is refused with `NOT_IN_CATALOG` ([docs](https://docs.nimblebrain.ai/config/connectors-catalog/)).

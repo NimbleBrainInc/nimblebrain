@@ -1,4 +1,5 @@
 import { NoopEventSink } from "../adapters/noop-events.ts";
+import { browseCatalog } from "../catalogs/browse.ts";
 import { isToolEnabled, type ResolvedFeatures } from "../config/features.ts";
 import type { CatalogListing } from "../connectors/catalog/types.ts";
 import { textContent } from "../engine/content-helpers.ts";
@@ -835,22 +836,28 @@ function checkSearchScopeGate(scope: string, features?: ResolvedFeatures): ToolR
 /** `search` scope=catalog — keyword-match installable entries from the connector catalog. */
 async function searchCatalog(runtime: Runtime | undefined, query: string): Promise<ToolResult> {
   try {
-    // Route agent discovery through the SAME method Browse uses —
-    // ConnectorCatalog.list(). It reads the catalog directory, runs the
-    // icon/URL safety scrub, projects, dedups and caches. One method, not
-    // two parallel read/filter paths, so the sets cannot drift — and the
-    // projection is load-bearing here, not incidental: it is what drops an
-    // entry this runtime cannot install, so the agent is never shown a
-    // connector whose install would be refused downstream.
+    // Route agent discovery through the SAME function Browse uses —
+    // `browseCatalog`. One read path, not two, so the sets cannot drift, and
+    // it is what drops an entry this runtime cannot install, so the agent is
+    // never shown a connector whose install would be refused downstream. Two
+    // catalogs listing one server give it one result: the agent installs by id.
     //
     // No runtime (non-agent/test paths) ⇒ no catalog ⇒ no results;
     // the production agent always has one.
-    const catalog = runtime?.getConnectorCatalog();
-    const aggregated = catalog ? await catalog.list() : null;
-    const results = matchEntriesByQuery(aggregated?.entries ?? [], query);
+    const aggregated = runtime
+      ? await browseCatalog({
+          listings: runtime.getCatalogListings(),
+          connectorCatalog: runtime.getConnectorCatalog(),
+          brokers: runtime.getManagedConnectorRegistry(),
+        })
+      : null;
+    // Match every row first: each catalog's row carries its own searchable
+    // text, so a server matches when any catalog's description of it does.
+    const matched = matchEntriesByQuery(aggregated?.entries ?? [], query);
+    const results = [...new Map(matched.map((e) => [e.id, e])).values()];
     if (results.length === 0) {
       // Distinguish "the catalog could not be read" from "no such server".
-      // list() collects a file-level failure into `errors` instead of
+      // Browse collects a read failure into `errors` instead of
       // throwing, so an unreadable catalog yields zero entries silently. If
       // a file errored and we got nothing back at all, surface a failure
       // rather than telling the agent the server doesn't exist. When one
