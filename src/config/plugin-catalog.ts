@@ -21,7 +21,7 @@ export const PLUGIN_CATALOG_URL_DEFAULT = "https://catalog.nimblebrain.ai";
 
 /** sha256 of the NimbleBrain index this image is pinned to. Bump deliberately. */
 export const PLUGIN_CATALOG_SHA256_DEFAULT =
-  "9c513052d1b1ddd0dedaee7f063d7d09abfe2e2af71d499b5bbc748b13b49034";
+  "60cef92b61cb6ef3cdb8d80e6126dc60a2e107cf759173f4f71ceaac11dd2197";
 
 /** Env names that configured the retired connector-skills repo; read only to warn. */
 export const RETIRED_CONNECTOR_SKILLS_ENV = ["CONNECTOR_SKILLS_REPO", "CONNECTOR_SKILLS_VERSION"];
