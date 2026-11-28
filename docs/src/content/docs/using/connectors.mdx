@@ -101,6 +101,38 @@ again, so there is nothing to hold back. See
 
 The last three rows depend on something configured once for the whole platform rather than anything in this workspace — but on *different* platform machinery: **composio** and **smithery** on a configured [connector provider](/config/connector-providers/), **provider** on the fleet authorizer or a declared gateway. None of them is something a workspace admin can turn on.
 
+## When a service asks before acting
+
+A service can ask the person using it to approve a call before it runs: a read
+its policy gates, or an action such as trashing a message. The question goes to
+the client that made the call. An outside MCP client that can show forms (a
+[connected client](/connect/external-clients/) such as Claude) shows the
+service's prompt, and the call runs once the person answers. A client that
+cannot show forms is never asked; the service answers it directly or refuses.
+
+### Google Workspace connectors
+
+Google's Workspace MCP servers (Gmail, Drive, and the rest) ask before an agent
+reads content from outside your organization's approved list, or takes an
+action Google gates, such as trashing. The prompt offers **Allow once**,
+**Always allow this tool**, and **Don't allow**. **Always allow this tool**
+stops Google asking again for that tool.
+
+A Google Workspace organization that limits which apps may sign in must trust
+the app first, or its people cannot connect. A super admin trusts it in the
+[Google Admin console](https://admin.google.com):
+
+<Steps>
+1. Find the app's OAuth client ID: it is the `client_id` in the address of the Google sign-in page a Google connector opens.
+2. Go to **Security → Access and data control → API controls**.
+3. Under **App access control**, choose **Manage app access**.
+4. Choose **Configure new app**, search for the client ID, and select the app.
+5. Choose the organizational units it applies to, set access to **Trusted**, and save.
+</Steps>
+
+The app then appears under **Configured apps** with its access set for the
+units you chose.
+
 ## Where your secrets live
 
 Tokens and credentials for a connector are stored in the workspace, at `workspaces/<wsId>/credentials/` on the platform — never echoed back to the UI. For **static**-auth connectors, the admin-configured OAuth client ID is recorded on the workspace; the client secret goes into the same credential store and is never returned in any API response. For **composio** connectors, the platform-wide Composio API key lives in the platform environment, not in the workspace. For an API-key Composio toolkit, the key you paste into the connect form is sent to Composio and **never stored by the platform** — only an opaque account pointer is kept. **smithery** connectors work the same way: the platform-wide Smithery API key lives in the platform environment, and any service credential is held write-only by Smithery — the platform keeps only the connection id.
