@@ -13,6 +13,12 @@
  * repo, whose version is a git tag, so an upgrade moves existing installs onto
  * the catalog with no operator or agent action.
  *
+ * Scope: only a connector with no installed-plugin record (ADR-0077). A
+ * connection a plugin owns carries `installedBy` (set at install, or by the
+ * adoption reconcile that runs earlier in boot, `src/tools/plugin-adopt.ts`)
+ * and is skipped: its skills are the record's managed skills. This reconcile and
+ * the resolver it calls remain only for connectors adoption left plain.
+ *
  * Safety:
  * - Pin-gated: a connector already at the pin is skipped with no fetch and no
  *   write, so steady-state boots are near-free.
@@ -105,6 +111,8 @@ async function reconcileRef(
   deps: ConnectorSkillReconcileDeps,
   catalog: CatalogCache,
 ): Promise<ConnectorRef> {
+  // A plugin's connection: its skills come from its installed-plugin record.
+  if (ref.installedBy) return ref;
   const boundVersion = ref.skillsLock?.[0]?.version;
   if (boundVersion === deps.pinnedVersion) return ref; // already current
 

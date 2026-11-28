@@ -134,6 +134,8 @@
 
 ### Changed
 
+- **Connectors installed from a catalog before plugins were recorded become plugins at startup** when exactly one catalog lists their server and its verified archive contains it, keeping their connection and credentials; conversation starters and the plugin list read installed plugins' records instead of opening catalog archives. [Docs](https://docs.nimblebrain.ai/using/skills/#connector-skill-overlays).
+- **Replacing a workspace's OAuth client signs its connections out before it is saved**, so a failure leaves the old client stored.
 - **Browse hides a brokered connector whose broker this instance does not configure**, since it could never install; it used to show and refuse at install.
 - **Browse lists the pinned plugin catalog.** With no `NB_CURATED_CATALOG_DIR`, the connector list comes from the catalog at `NB_PLUGIN_CATALOG_URL`, verified against `NB_PLUGIN_CATALOG_CONNECTORS_SHA256` and cached in the work directory, so dev, `npx nimblebrain` and the image show one list; a set directory still replaces it ([docs](https://docs.nimblebrain.ai/config/connectors-catalog/#where-the-catalog-lives)).
 - **Task telemetry:** `automation.run_completed` carries no `automation_id` or batch flag, `automation.created` is not sent, and `task.created` reports on every deployment. [Docs](https://docs.nimblebrain.ai/using/telemetry/).

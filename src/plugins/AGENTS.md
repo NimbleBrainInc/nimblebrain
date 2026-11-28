@@ -82,6 +82,27 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
   beside old credentials, and the move is judged against the plugin's current record as well as the
   stored ref, so a retry of a stopped update repeats it until the new record lands. A brokered
   connection is left alone (its endpoint is the broker's session). A connection another plugin supplies is not changed.
+- **Existing installs are adopted at boot, before any connector starts** (`src/tools/plugin-adopt.ts`,
+  called from `Runtime.start` through `adoptExistingInstalls`, under the owner's lifecycle lock). A
+  connector qualifies only when its `skillsLock` records a plugin and server, it carries no
+  `installedBy` and no `display`, no record names it, exactly one listing entry names its server,
+  and that entry's verified artifact contains it; every catalog must have a readable listing, or
+  adoption waits for the next boot. It writes the managed skills (a bound one in place of the old
+  binding's file, whatever else the old binding left removed), then the record, then
+  `installedBy` with the lock dropped. Anything else is left exactly as it is and logged with its
+  claimants. A record that names a connector still carrying its lock is an adoption that stopped,
+  and is finished with no fetch. Artifacts are fetched only for connectors being adopted, a few at
+  a time and a bounded number per boot.
+- **Starters and the plugin list read records.** `nb__conversation_starters`
+  (`src/services/workspace-conversation-starters.ts`) gives each record's starters under the first of
+  its connections the workspace has; `list_plugins` (`src/tools/plugin-listing.ts`) lists each
+  record as one plugin over its connections, and a connector no record names as a plugin of its own.
+  Neither opens an archive. A connection's overlay (the published `skill://` guidance it supersedes)
+  is read from the record's bound skills too.
+- **The zip-scanning resolver is for connectors with no record only** (until ADR-0077 step 5
+  deletes it): `syncBoundSkills` at a workspace install by catalog id that is not a plugin install
+  (`handleInstallRemoteOAuth` with `bindSkills` left on), and the boot reconcile
+  (`connector-skill-reconcile.ts`), which skips a connection with `installedBy`.
 - **A plugin's skills are managed** (`src/skills/managed-skills.ts`): a bound one in the owner's
   `connector-skills/<serverName>/`, any other in `plugin-skills/<address>/`, each marked by
   provenance `plugin:<address>:<skill>`. The skill tools refuse to write any file in either

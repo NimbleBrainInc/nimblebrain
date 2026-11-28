@@ -1554,6 +1554,17 @@ export class ConnectorLifecycleManager {
   }
 
   /**
+   * Point the live instance back at `ref`, the one stored, after a
+   * {@link replaceConnectionRef} whose caller then failed to store the new
+   * ref. Its sign-in stays gone, as the records do. No-op when the connector
+   * has no live instance here.
+   */
+  restoreConnectionRef(serverName: string, wsId: string, ref: ConnectorRef): void {
+    const instance = this.instances.get(`${serverName}|${wsId}`);
+    if (instance) instance.ref = { ...ref };
+  }
+
+  /**
    * Stop and unwire the McpSource for one (connector, workspace-principal)
    * tuple. Stops `source.stop()` and removes the source from the
    * workspace registry.

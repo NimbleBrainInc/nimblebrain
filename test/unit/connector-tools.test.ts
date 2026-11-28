@@ -831,6 +831,65 @@ describe("manage_connectors.set_oauth_client on an installed connector", () => {
     expect(instance?.connections?.get("_workspace")?.state).toBe("not_authenticated");
   });
 
+  test("a sign-out that fails stops the save, leaving the old client and secret stored", async () => {
+    const original = h.credStore.delete.bind(h.credStore);
+    h.credStore.delete = async (scope, key) => {
+      if (key.startsWith(`mcp-oauth.${SERVER}.`)) throw new Error("simulated credential delete");
+      return original(scope, key);
+    };
+    try {
+      await expect(
+        buildTool(h, ADMIN_USER).handler({
+          action: "set_oauth_client",
+          catalogId: DROPBOX_ID,
+          clientId: "cid-new",
+          clientSecret: "sec-new",
+        }),
+      ).rejects.toThrow("simulated credential delete");
+    } finally {
+      h.credStore.delete = original;
+    }
+
+    expect(registeredClientId((await installedRef())?.oauthClient)).toBe("cid-old");
+    const ws = await h.workspaceStore.get(h.wsId);
+    expect(ws?.oauthClients?.[DROPBOX_ID]?.clientId).toBe("cid-old");
+    const secret = await h.credStore.get(scope(), DROPBOX_SECRET_KEY, {
+      caller: "test",
+      purpose: "assert the secret was not rotated",
+    });
+    expect(secret?.reveal()).toBe("sec-old");
+    expect(registeredClientId(h.lifecycle.getInstance(SERVER, h.wsId)?.ref?.oauthClient)).toBe(
+      "cid-old",
+    );
+  });
+
+  test("the new client is stored only after the old sign-in is gone", async () => {
+    const order: string[] = [];
+    const del = h.credStore.delete.bind(h.credStore);
+    const update = h.workspaceStore.update.bind(h.workspaceStore);
+    h.credStore.delete = async (scope, key) => {
+      if (key.startsWith(`mcp-oauth.${SERVER}.`)) order.push("delete");
+      return del(scope, key);
+    };
+    h.workspaceStore.update = async (...args: Parameters<typeof update>) => {
+      order.push("save");
+      return update(...args);
+    };
+    try {
+      await buildTool(h, ADMIN_USER).handler({
+        action: "set_oauth_client",
+        catalogId: DROPBOX_ID,
+        clientId: "cid-new",
+        clientSecret: "sec-new",
+      });
+    } finally {
+      h.credStore.delete = del;
+      h.workspaceStore.update = update;
+    }
+    expect(order.includes("delete")).toBe(true);
+    expect(order.lastIndexOf("delete")).toBeLessThan(order.indexOf("save"));
+  });
+
   test("the same client id with a new secret keeps the sign-in", async () => {
     await buildTool(h, ADMIN_USER).handler({
       action: "set_oauth_client",

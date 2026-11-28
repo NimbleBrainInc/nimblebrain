@@ -57,7 +57,7 @@ import { log } from "../observability/log.ts";
 import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
 import type { PluginAccount, PluginsListOutput } from "../platform/schemas/plugins.ts";
-import type { PluginOwner } from "../plugins/installed/record.ts";
+import type { InstalledPluginRecord, PluginOwner } from "../plugins/installed/record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { canonicalJson } from "../util/jcs.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
@@ -80,7 +80,7 @@ import {
   uninstallPlugin,
   updatePlugin,
 } from "./plugin-install.ts";
-import { accountOf, projectPlugins } from "./plugin-listing.ts";
+import { accountOf, type PluginDisplay, projectPlugins } from "./plugin-listing.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 import type { Tool, ToolSource } from "./types.ts";
 import { WORKSPACE_OPTIONAL_META } from "./workspace-optional.ts";
@@ -765,13 +765,19 @@ async function handleListPlugins(
     return errResult("No workspace in scope — call from a workspace.");
   }
   if (!callerId) return errResult("Authentication required.");
-  const [workspace, personal, published] = await Promise.all([
+  const records = ctx.runtime.getPluginRecords();
+  const [workspace, personal, published, workspaceRecords, personalRecords] = await Promise.all([
     listInstalledEntries(ctx, wsId, callerId, { withIdentity: true }),
     listPersonalConnectorEntries(ctx, callerId, { withPlacements: true }),
     ctx.runtime.listPublishedSkills(wsId),
+    records.list({ kind: "workspace", wsId }),
+    records.list({ kind: "person", userId: callerId }),
   ]);
   const output: PluginsListOutput = projectPlugins({
     wsId,
+    workspaceRecords,
+    personalRecords,
+    displays: await pluginDisplays(ctx, [...workspaceRecords, ...personalRecords]),
     workspace: workspace.map((c) => ({ ...c, description: c.catalog?.description })),
     personal: personal.map((c) => ({ ...c, ...deriveConnectorStatus({ state: c.state }) })),
     overlays: ctx.runtime.listConnectorOverlays(wsId),
@@ -787,6 +793,35 @@ async function handleListPlugins(
     structuredContent: output,
     isError: false,
   };
+}
+
+/**
+ * How the catalogs' listings show each installed plugin, by address: the
+ * entries' display fields, never an artifact. Only read when some record is
+ * installed; a listing that cannot be read shows none.
+ */
+async function pluginDisplays(
+  ctx: ManageConnectorsContext,
+  records: readonly InstalledPluginRecord[],
+): Promise<Map<string, PluginDisplay>> {
+  const out = new Map<string, PluginDisplay>();
+  if (records.length === 0) return out;
+  const wanted = new Set(records.map((r) => r.address));
+  try {
+    for (const snapshot of await ctx.runtime.getCatalogListings().snapshots()) {
+      for (const e of snapshot.entries) {
+        if (!wanted.has(e.address) || out.has(e.address)) continue;
+        out.set(e.address, {
+          displayName: e.displayName,
+          ...(e.description ? { description: e.description } : {}),
+          ...(e.iconUrl ? { iconUrl: e.iconUrl } : {}),
+        });
+      }
+    }
+  } catch (err) {
+    log.warn(`[plugins] listings cannot be read for the plugin list: ${String(err)}`);
+  }
+  return out;
 }
 
 /**
@@ -4810,22 +4845,16 @@ async function handleSetOAuthClient(
     );
   }
 
-  // Persist secret first — if the credential store write fails, we
-  // haven't touched workspace.json yet, so there's nothing to roll
-  // back. The reverse case (workspace.json fails after the credential
-  // landed) needs explicit rollback so we don't leave an orphan
-  // secret pointing at a clientId that was never recorded.
+  // Inside the workspace's chain, in this order: each connection the new
+  // client replaces is signed out (its OAuth records deleted), then the secret
+  // is stored, then workspace.json. A sign-out that fails stops the save with
+  // nothing changed, and an interruption after it leaves the old client with no
+  // sign-in, never the new client beside the old client's credentials. A failed
+  // workspace.json write rolls back a secret this call created
+  // (`persistWorkspaceOAuthClient`), never one it replaced.
   const credStore = ctx.runtime.getCredentialStore();
-  const hadPriorSecret =
-    (await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
-      caller: "connector-tools:set_oauth_client",
-      purpose: "decide whether a failed workspace.json write may roll the secret back",
-    })) !== null;
-  await credStore.put({ kind: "workspace", wsId }, clientSecretKey, clientSecret.trim());
-
-  // Stamp the public clientId + audit trail into workspace.json, from the
-  // record as it stands inside the workspace's chain.
-  const { apps, rotated } = await serializePerWorkspace(wsId, async () => {
+  const lifecycle = ctx.runtime.getLifecycle();
+  const apps = await serializePerWorkspace(wsId, async () => {
     const current = (await ctx.runtime.getWorkspaceStore().get(wsId)) ?? ws;
     const apps: NonNullable<Workspace["oauthClients"]> = { ...(current.oauthClients ?? {}) };
     apps[catalogId] = {
@@ -4834,25 +4863,44 @@ async function handleSetOAuthClient(
       configuredBy: identity.id,
     };
     const rotated = rotateInstalledOAuthClients(current.connectors, entry.url, clientId.trim());
-    await persistWorkspaceOAuthClient(
-      ctx,
-      wsId,
-      {
-        oauthClients: apps,
-        ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
-      },
-      credStore,
-      clientSecretKey,
-      hadPriorSecret,
-    );
-    return { apps, rotated };
+    // The install copied the client id onto its ref, and every connection reads
+    // its client from there. A new client invalidates whatever the old one
+    // signed in, so each rotated connection drops its OAuth records and asks
+    // for sign-in; the live instance reads the new ref from here on.
+    const signedOut: ConnectorRef[] = [];
+    try {
+      for (const ref of rotated.refs) {
+        await lifecycle.replaceConnectionRef(ref.serverName, wsId, ref);
+        signedOut.push(ref);
+      }
+      const hadPriorSecret =
+        (await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
+          caller: "connector-tools:set_oauth_client",
+          purpose: "decide whether a failed workspace.json write may roll the secret back",
+        })) !== null;
+      await credStore.put({ kind: "workspace", wsId }, clientSecretKey, clientSecret.trim());
+      await persistWorkspaceOAuthClient(
+        ctx,
+        wsId,
+        {
+          oauthClients: apps,
+          ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
+        },
+        credStore,
+        clientSecretKey,
+        hadPriorSecret,
+      );
+    } catch (err) {
+      // What is stored is still the old client: point the live instances back
+      // at it. Their sign-in is already gone, which is the state stored too.
+      for (const ref of signedOut) {
+        const stored = current.connectors.find((r) => r.serverName === ref.serverName);
+        if (stored) lifecycle.restoreConnectionRef(ref.serverName, wsId, stored);
+      }
+      throw err;
+    }
+    return apps;
   });
-  // The install copied the client id onto its ref, and every connection reads
-  // its client from there. A new client invalidates whatever the old one signed
-  // in, so each rotated connection drops its OAuth records and asks for sign-in.
-  for (const ref of rotated.refs) {
-    await ctx.runtime.getLifecycle().replaceConnectionRef(ref.serverName, wsId, ref);
-  }
 
   return {
     content: textContent(`Configured OAuth client for "${entry.name}".`),

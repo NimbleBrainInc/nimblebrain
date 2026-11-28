@@ -2,33 +2,37 @@
  * Workspace conversation starters: those of the plugins a workspace has
  * installed, which the overview offers a member who does not know what to ask.
  *
- * Each installed connector is matched to the server its plugin names by
- * registry name (`registryNameFromCatalog`, the same lookup the skill reconcile
- * uses), and the plugin's conversation starters are read from the pinned
- * catalog (`resolveServerConversationStarters`). Nothing is stored: the catalog's archives are
- * cached by digest, so a read after the first is local.
+ * They are read from the workspace's installed-plugin records (ADR-0077),
+ * which keep the starters each install's verified artifact carried. Nothing
+ * opens an archive or reads a catalog. A connector no record names (one added
+ * by URL, or a catalog install adoption left plain) has none.
  *
- * Best-effort: a catalog that cannot be read gives no starters rather than an
+ * Each plugin's starters are joined to the first of its connections the
+ * workspace has, by server name, which the overview uses for status and icon.
+ * A plugin with no connection here (a skill-only plugin) offers none, since a
+ * starter is shown against a connection.
+ *
+ * Best-effort: records that cannot be read give no starters rather than an
  * error, because starters are a suggestion and the overview stands without them.
  */
 
-import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
-import { registryNameFromCatalog } from "../connectors/runtime/connector-skill-reconcile.ts";
 import { isUsableConnectorRef, serverNameFromRef } from "../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import { log } from "../observability/log.ts";
 import type { ConversationStarter } from "../platform/schemas/home.ts";
-import type { ServerConversationStarters } from "../skills/connector-skill-resolver.ts";
+import { connectionOf, type InstalledPluginRecord } from "../plugins/installed/record.ts";
 
 export interface WorkspaceConversationStartersDeps {
   /** The workspace's installed connectors. */
   connectors: (wsId: string) => Promise<readonly ConnectorRef[]>;
-  catalogByIdMap: () => Promise<ReadonlyMap<string, ConnectorCatalogEntry>>;
-  catalogByUrl: () => Promise<ReadonlyMap<string, ConnectorCatalogEntry>>;
-  /** The starters of the plugins naming these registry names (`resolveServerConversationStarters`). */
-  resolveConversationStarters: (
-    servers: readonly string[],
-  ) => Promise<ServerConversationStarters[]>;
+  /** The workspace's installed-plugin records, in install order. */
+  records: (wsId: string) => Promise<readonly InstalledPluginRecord[]>;
+}
+
+/** A plugin's name in its catalog: its address before `@`. */
+function pluginName(address: string): string {
+  const at = address.lastIndexOf("@");
+  return at > 0 ? address.slice(0, at) : address;
 }
 
 export async function workspaceConversationStarters(
@@ -36,29 +40,18 @@ export async function workspaceConversationStarters(
   deps: WorkspaceConversationStartersDeps,
 ): Promise<ConversationStarter[]> {
   try {
-    const refs = await deps.connectors(wsId);
-    // Registry name → this workspace's server name for it. A catalog lookup is
-    // needed only for a connector whose skill lock records no registry name.
-    const needsCatalog = refs.some((ref) => !ref.skillsLock?.[0]?.server);
-    const [byId, byUrl] = needsCatalog
-      ? await Promise.all([deps.catalogByIdMap(), deps.catalogByUrl()])
-      : [undefined, undefined];
-    const serverNameFor = new Map<string, string>();
+    const [refs, records] = await Promise.all([deps.connectors(wsId), deps.records(wsId)]);
+    const present = new Set<string>();
     for (const ref of refs) {
       const serverName = serverNameFromRef(ref);
-      if (serverName === null || !isUsableConnectorRef(ref)) continue;
-      const registry = registryNameFromCatalog(ref, byId, byUrl);
-      if (registry && !serverNameFor.has(registry)) serverNameFor.set(registry, serverName);
+      if (serverName !== null && isUsableConnectorRef(ref)) present.add(serverName);
     }
-    if (serverNameFor.size === 0) return [];
-
-    const found = await deps.resolveConversationStarters([...serverNameFor.keys()]);
-    return found.flatMap((entry) => {
-      const serverName = serverNameFor.get(entry.server);
+    return records.flatMap((record) => {
+      const serverName = record.connectors.map(connectionOf).find((name) => present.has(name));
       if (!serverName) return [];
-      return entry.conversationStarters.map((s) => ({
+      return record.starters.map((s) => ({
         serverName,
-        plugin: entry.plugin,
+        plugin: pluginName(record.address),
         title: s.title,
         text: s.text,
       }));
