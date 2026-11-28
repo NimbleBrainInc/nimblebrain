@@ -4810,22 +4810,16 @@ async function handleSetOAuthClient(
     );
   }
 
-  // Persist secret first — if the credential store write fails, we
-  // haven't touched workspace.json yet, so there's nothing to roll
-  // back. The reverse case (workspace.json fails after the credential
-  // landed) needs explicit rollback so we don't leave an orphan
-  // secret pointing at a clientId that was never recorded.
+  // Inside the workspace's chain, in this order: each connection the new
+  // client replaces is signed out (its OAuth records deleted), then the secret
+  // is stored, then workspace.json. A sign-out that fails stops the save with
+  // nothing changed, and an interruption after it leaves the old client with no
+  // sign-in, never the new client beside the old client's credentials. A failed
+  // workspace.json write rolls back a secret this call created
+  // (`persistWorkspaceOAuthClient`), never one it replaced.
   const credStore = ctx.runtime.getCredentialStore();
-  const hadPriorSecret =
-    (await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
-      caller: "connector-tools:set_oauth_client",
-      purpose: "decide whether a failed workspace.json write may roll the secret back",
-    })) !== null;
-  await credStore.put({ kind: "workspace", wsId }, clientSecretKey, clientSecret.trim());
-
-  // Stamp the public clientId + audit trail into workspace.json, from the
-  // record as it stands inside the workspace's chain.
-  const { apps, rotated } = await serializePerWorkspace(wsId, async () => {
+  const lifecycle = ctx.runtime.getLifecycle();
+  const apps = await serializePerWorkspace(wsId, async () => {
     const current = (await ctx.runtime.getWorkspaceStore().get(wsId)) ?? ws;
     const apps: NonNullable<Workspace["oauthClients"]> = { ...(current.oauthClients ?? {}) };
     apps[catalogId] = {
@@ -4834,25 +4828,44 @@ async function handleSetOAuthClient(
       configuredBy: identity.id,
     };
     const rotated = rotateInstalledOAuthClients(current.connectors, entry.url, clientId.trim());
-    await persistWorkspaceOAuthClient(
-      ctx,
-      wsId,
-      {
-        oauthClients: apps,
-        ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
-      },
-      credStore,
-      clientSecretKey,
-      hadPriorSecret,
-    );
-    return { apps, rotated };
+    // The install copied the client id onto its ref, and every connection reads
+    // its client from there. A new client invalidates whatever the old one
+    // signed in, so each rotated connection drops its OAuth records and asks
+    // for sign-in; the live instance reads the new ref from here on.
+    const signedOut: ConnectorRef[] = [];
+    try {
+      for (const ref of rotated.refs) {
+        await lifecycle.replaceConnectionRef(ref.serverName, wsId, ref);
+        signedOut.push(ref);
+      }
+      const hadPriorSecret =
+        (await credStore.get({ kind: "workspace", wsId }, clientSecretKey, {
+          caller: "connector-tools:set_oauth_client",
+          purpose: "decide whether a failed workspace.json write may roll the secret back",
+        })) !== null;
+      await credStore.put({ kind: "workspace", wsId }, clientSecretKey, clientSecret.trim());
+      await persistWorkspaceOAuthClient(
+        ctx,
+        wsId,
+        {
+          oauthClients: apps,
+          ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
+        },
+        credStore,
+        clientSecretKey,
+        hadPriorSecret,
+      );
+    } catch (err) {
+      // What is stored is still the old client: point the live instances back
+      // at it. Their sign-in is already gone, which is the state stored too.
+      for (const ref of signedOut) {
+        const stored = current.connectors.find((r) => r.serverName === ref.serverName);
+        if (stored) lifecycle.restoreConnectionRef(ref.serverName, wsId, stored);
+      }
+      throw err;
+    }
+    return apps;
   });
-  // The install copied the client id onto its ref, and every connection reads
-  // its client from there. A new client invalidates whatever the old one signed
-  // in, so each rotated connection drops its OAuth records and asks for sign-in.
-  for (const ref of rotated.refs) {
-    await ctx.runtime.getLifecycle().replaceConnectionRef(ref.serverName, wsId, ref);
-  }
 
   return {
     content: textContent(`Configured OAuth client for "${entry.name}".`),
