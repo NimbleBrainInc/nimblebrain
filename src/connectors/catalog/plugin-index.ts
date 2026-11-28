@@ -38,6 +38,7 @@ import {
   indexCachePath,
   loadArchive,
   loadIndex,
+  mapArchives,
   openArchive,
   type PinnedCatalogOptions,
   parseIndexBytes,
@@ -158,12 +159,10 @@ async function build(opts: PinnedCatalogOptions): Promise<IndexCatalogBuild> {
   }
 
   const source = pinnedIndexUrl(opts.catalogUrl, indexPin);
-  const archives = await Promise.all(
-    index.plugins.map((entry) =>
-      loadArchive(entry, opts).then(
-        (bytes) => ({ bytes }),
-        (err: unknown) => ({ error: describe(err) }),
-      ),
+  const archives = await mapArchives(index.plugins, (entry) =>
+    loadArchive(entry, opts).then(
+      (bytes) => ({ bytes }),
+      (err: unknown) => ({ error: describe(err) as string }),
     ),
   );
 

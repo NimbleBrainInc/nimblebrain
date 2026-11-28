@@ -26,6 +26,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { mapWithConcurrency } from "../util/concurrency.ts";
 import { assertDigest, fetchBounded } from "../util/pinned-fetch.ts";
 import { readZip, ZIP_MAX_TOTAL_BYTES } from "../util/zip.ts";
 import { PLUGIN_MANIFEST_FILE, readPluginJson } from "./manifest.ts";
@@ -74,6 +75,22 @@ const CLAUDE_PLUGIN_MANIFEST_FILE = ".claude-plugin/plugin.json";
  */
 export function pluginServerDetailPath(key: string): string {
   return `ai.nimblebrain/servers/${key}.json`;
+}
+
+/**
+ * How many plugin archives are fetched at once. Fetching every archive of an
+ * index at once (about a hundred) makes a share of them time out against the
+ * catalog's CDN; a few at a time fetches them all in about a second.
+ */
+export const ARCHIVE_FETCH_CONCURRENCY = 8;
+
+/** `load` over every plugin of an index, at most `ARCHIVE_FETCH_CONCURRENCY` at a time, results in index order. */
+export async function mapArchives<T, R>(items: T[], load: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  await mapWithConcurrency(items, ARCHIVE_FETCH_CONCURRENCY, async (item, i) => {
+    out[i] = await load(item);
+  });
+  return out;
 }
 
 /** Where the catalog keeps the NimbleBrain index with this sha256. */

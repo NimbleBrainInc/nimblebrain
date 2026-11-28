@@ -35,6 +35,7 @@ import {
   type IndexEntry,
   loadArchive,
   loadIndex,
+  mapArchives,
   openArchive,
   type PinnedCatalogOptions,
 } from "../plugins/pinned-catalog.ts";
@@ -90,7 +91,7 @@ export async function resolveServerSkills(
   opts: ResolveServerSkillsOptions,
 ): Promise<PluginSkill[]> {
   const index = await loadIndex(opts);
-  const records = await Promise.all(index.plugins.map((entry) => loadPlugin(entry, opts)));
+  const records = await mapArchives(index.plugins, (entry) => loadPlugin(entry, opts));
   const out: PluginSkill[] = [];
   index.plugins.forEach((entry, i) => {
     const record = records[i]!;
@@ -126,7 +127,7 @@ export async function resolveServerConversationStarters(
   const wanted = new Set(servers);
   if (wanted.size === 0) return [];
   const index = await loadIndex(opts);
-  const records = await Promise.all(index.plugins.map((entry) => loadPlugin(entry, opts)));
+  const records = await mapArchives(index.plugins, (entry) => loadPlugin(entry, opts));
   const out: ServerConversationStarters[] = [];
   index.plugins.forEach((entry, i) => {
     const record = records[i]!;
