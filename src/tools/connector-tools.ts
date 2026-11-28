@@ -2,7 +2,6 @@ import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { brandName } from "../brand/index.ts";
 import { type BrowseResult, browseCatalog } from "../catalogs/browse.ts";
 import { SERVER_RECORD_TYPE } from "../catalogs/listing.ts";
-import { CONNECTOR_LIST_CATALOG_NAME } from "../config/catalogs.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
@@ -658,14 +657,13 @@ async function handleListCatalog(
   };
 }
 
-/** Browse's rows for this runtime: its catalogs' listings over its connector list. */
+/** Browse's rows for this runtime: its catalogs' listings. */
 function browse(
   ctx: ManageConnectorsContext,
   isOAuthClientConfigured?: (catalogId: string, clientSecretKey: string) => Promise<boolean>,
 ): Promise<BrowseResult> {
   return browseCatalog({
     listings: ctx.runtime.getCatalogListings(),
-    connectorCatalog: ctx.runtime.getConnectorCatalog(),
     brokers: ctx.runtime.getManagedConnectorRegistry(),
     ...(isOAuthClientConfigured ? { isOAuthClientConfigured } : {}),
   });
@@ -1478,7 +1476,7 @@ async function handleInstall(
   addressArg = "",
 ): Promise<ToolResult> {
   const address = addressArg || entryAddress(rawEntry);
-  if (address && !address.endsWith(`@${CONNECTOR_LIST_CATALOG_NAME}`)) {
+  if (address) {
     if (!identity) return errResult("Authentication required.");
     return handleInstallPlugin(ctx, identity, address, wsIdArg, scope, grantWsId);
   }
@@ -1487,7 +1485,7 @@ async function handleInstall(
   if (!identity) return errResult("Authentication required.");
 
   // An entry with only an id installs the one catalog item that lists its server.
-  if (!address && requested.install.kind === "remote-oauth") {
+  if (requested.install.kind === "remote-oauth") {
     const item = await catalogItemForServer(ctx, requested.id);
     if (item && "isError" in item) return item;
     if (item) return handleInstallPlugin(ctx, identity, item.address, wsIdArg, scope, grantWsId);
@@ -1498,7 +1496,7 @@ async function handleInstall(
   return installConnectorEntry(ctx, identity, resolved, wsIdArg, scope, grantWsId);
 }
 
-/** Install a connector from the connector list's own entry (a mounted directory's, or one by URL). */
+/** Install a connector from the connector list's own entry, or one added by URL. */
 async function installConnectorEntry(
   ctx: ManageConnectorsContext,
   identity: UserIdentity,
@@ -1557,17 +1555,13 @@ function entryAddress(raw: unknown): string {
 /**
  * The catalog item an id-only install request means: the one listing entry
  * that names server `id` (in its extension's `servers`, or a bare connector's
- * inline record), or null to fall through to the connector list. A mounted
- * directory's own record (`NB_CURATED_CATALOG_DIR`) installs from that
- * directory, as its `curated` row does. Two catalogs naming the server is a
- * refusal that names both addresses.
+ * inline record), or null to fall through to the connector list. Two catalogs
+ * naming the server is a refusal that names both addresses.
  */
 async function catalogItemForServer(
   ctx: ManageConnectorsContext,
   id: string,
 ): Promise<{ address: string } | ToolResult | null> {
-  const list = ctx.runtime.getConnectorCatalog();
-  if (list.isMounted() && (await list.listingById(id))) return null;
   const addresses: string[] = [];
   for (const snapshot of await ctx.runtime.getCatalogListings().snapshots()) {
     for (const entry of snapshot.entries) {

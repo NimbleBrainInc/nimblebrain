@@ -847,7 +847,6 @@ async function searchCatalog(runtime: Runtime | undefined, query: string): Promi
     const aggregated = runtime
       ? await browseCatalog({
           listings: runtime.getCatalogListings(),
-          connectorCatalog: runtime.getConnectorCatalog(),
           brokers: runtime.getManagedConnectorRegistry(),
         })
       : null;

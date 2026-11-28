@@ -32,12 +32,12 @@ import {
 } from "@modelcontextprotocol/server";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import { FIRST_PARTY_GRANT, type VerifiedIdentity } from "../../src/identity/provider.ts";
 import { DevIdentityProvider } from "../../src/identity/providers/dev.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { makeIdentity } from "../helpers/identity.ts";
 import { newMcpClient } from "../helpers/mcp-client.ts";
@@ -190,7 +190,6 @@ let connector: ReturnType<typeof Bun.serve>;
 let runtime: Runtime;
 let handle: ServerHandle;
 let workDir: string;
-let priorCatalogDir: string | undefined;
 
 /** An MCP source for the fixture connector, registered under `name`. */
 async function fixtureSource(name: string): Promise<McpSource> {
@@ -229,9 +228,8 @@ beforeAll(async () => {
         auth: none
 `,
   );
-  priorCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
   runtime = await Runtime.start({
+    catalogs: connectorListCatalogs(catalogDir),
     identityProvider: ({ workDir: dir, userStore }) => new TwoIdentityProvider(dir, userStore),
     languageModel: createEchoModel(),
     logging: { disabled: true },
@@ -250,8 +248,6 @@ afterAll(async () => {
   handle.stop(true);
   await runtime.shutdown();
   connector.stop(true);
-  if (priorCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = priorCatalogDir;
   rmSync(workDir, { recursive: true, force: true });
 });
 

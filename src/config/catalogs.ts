@@ -70,14 +70,6 @@ export const DEFAULT_CATALOG_REFRESH_MINUTES = 15;
 /** The longest interval an entry may name: one day. */
 export const MAX_CATALOG_REFRESH_MINUTES = 1440;
 
-/**
- * The catalog name Browse lists the connector list's own records under: the
- * servers the install source holds that no listing names (a mounted
- * `NB_CURATED_CATALOG_DIR`'s fleet services and tenant entries). Reserved, so
- * no configured catalog can take it.
- */
-export const CONNECTOR_LIST_CATALOG_NAME = "curated";
-
 /** Where a catalog is read from. */
 export type CatalogSource = { kind: "url"; url: string } | { kind: "path"; path: string };
 
@@ -105,9 +97,8 @@ export function defaultCatalogs(env: Env = process.env): CatalogConfig[] {
  * Resolve the `catalogs` block, or the default when it is absent. Throws on a
  * block that cannot work: a `required` catalog without a pin, a malformed pin,
  * a URL that is neither `https` nor loopback `http`, two catalogs of one
- * source or one name, or a name that is reserved or not a short lowercase id.
- * An empty list is valid and reads no listings; the connector list's records
- * still show under `curated` until install reads an item's own archive.
+ * source or one name, or a name that is not a short lowercase id. An empty
+ * list is valid and reads no listings, so Browse lists nothing.
  */
 export function resolveCatalogs(
   configured: CatalogConfig[] | undefined,
@@ -148,11 +139,6 @@ function resolveOne(entry: CatalogConfig, where: string, baseDir: string): Resol
   if (!NAME.test(name) || name.length > 64) {
     throw new Error(
       `${where}: catalog name "${name}" must be lowercase letters, digits and hyphens; set "name"`,
-    );
-  }
-  if (name === CONNECTOR_LIST_CATALOG_NAME) {
-    throw new Error(
-      `${where}: the catalog name "${name}" is reserved for the connector list; set another "name"`,
     );
   }
   const minutes = entry.refreshMinutes ?? DEFAULT_CATALOG_REFRESH_MINUTES;

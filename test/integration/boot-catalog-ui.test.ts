@@ -12,11 +12,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
@@ -48,7 +48,6 @@ const CATALOG = `servers:
 `;
 
 let workDir: string;
-let priorCatalogDir: string | undefined;
 
 beforeEach(() => {
   workDir = join(
@@ -58,13 +57,9 @@ beforeEach(() => {
   const catalogDir = join(workDir, "catalog");
   mkdirSync(catalogDir, { recursive: true });
   writeFileSync(join(catalogDir, "platform.yaml"), CATALOG);
-  priorCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
 });
 
 afterEach(() => {
-  if (priorCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = priorCatalogDir;
   rmSync(workDir, { recursive: true, force: true });
 });
 
@@ -87,6 +82,7 @@ describe("boot takes an installed connector's host UI from the catalog", () => {
     await store.update(ws.id, { connectors: [installed] });
 
     const runtime = await Runtime.start({
+      catalogs: connectorListCatalogs(join(workDir, "catalog")),
       identityProvider: devProvider,
       languageModel: createEchoModel(),
       logging: { disabled: true },

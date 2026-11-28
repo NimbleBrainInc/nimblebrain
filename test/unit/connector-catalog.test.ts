@@ -3,9 +3,11 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browseCatalog } from "../../src/catalogs/browse.ts";
-import { noCatalogListings } from "../../src/catalogs/reader.ts";
+import { createCatalogListings } from "../../src/catalogs/reader.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import { log } from "../../src/observability/log.ts";
+import { pathCatalog } from "../helpers/ai-catalog.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 
 /**
  * `ConnectorCatalog` is the only thing tool handlers should call.
@@ -47,17 +49,24 @@ function remoteServer(over: Record<string, unknown> = {}): Record<string, unknow
 }
 
 /**
- * Browse over the catalog alone: with no listings, every record is a row of the
- * reserved `curated` catalog, so this reads the connector list's projection,
- * dedupe and scrub exactly as Browse applies them.
+ * The connector list's installable records and its read errors: its
+ * projection, dedupe and scrub, as every reader of the list applies them.
  */
-function list(
-  catalog: ConnectorCatalog,
+async function list(catalog: ConnectorCatalog) {
+  return { entries: await catalog.listings(), errors: (await catalog.servers()).errors };
+}
+
+/** Browse over the list as an operator now mounts it: converted to a path catalog. */
+function browseConverted(
+  catalogDir: string,
   opts: { isOAuthClientConfigured?: (id: string, key: string) => Promise<boolean> } = {},
 ) {
+  const [catalog] = connectorListCatalogs(catalogDir);
   return browseCatalog({
-    listings: noCatalogListings(),
-    connectorCatalog: catalog,
+    listings: createCatalogListings({
+      catalogs: [pathCatalog("test", (catalog as { source: string }).source)],
+      cacheDir: join(workDir, "cache"),
+    }),
     brokers: { has: () => false },
     ...opts,
   });
@@ -67,7 +76,7 @@ afterEach(() => {
   if (workDir) rmSync(workDir, { recursive: true, force: true });
 });
 
-describe("ConnectorCatalog through Browse", () => {
+describe("ConnectorCatalog listings", () => {
   test("aggregates entries from every catalog file, projecting to CatalogListing", async () => {
     const catalogDir = freshCatalog();
     writeStaticCatalog(
@@ -196,7 +205,7 @@ describe("ConnectorCatalog through Browse", () => {
       },
     ]);
     const probe = mock(async () => true);
-    const result = await list(new ConnectorCatalog(catalogDir), { isOAuthClientConfigured: probe });
+    const result = await browseConverted(catalogDir, { isOAuthClientConfigured: probe });
     // Only Asana (static-auth + oauthClientSetup) gets probed; Granola (dcr) doesn't.
     expect(probe).toHaveBeenCalledTimes(1);
     const asana = result.entries.find((e) => e.id === "io.asana/mcp");

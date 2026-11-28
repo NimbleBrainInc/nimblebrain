@@ -6,14 +6,14 @@
  * restarts (recovery, health checks). A reader bound to one `ConnectorCatalog`
  * instance would serve the boot-time read forever, since the instance memoizes
  * it: an audience edit would never land and a withdrawn entry would keep
- * minting.
+ * minting. The catalog is a path catalog of bare connectors; an operator's
+ * edit reaches the runtime at the listing's next read, forced here.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { slugifyServerName } from "../../src/connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../../src/connectors/runtime/types.ts";
 import {
@@ -24,6 +24,7 @@ import { Runtime } from "../../src/runtime/runtime.ts";
 import { registerCredentialProvider } from "../../src/tools/credential-provider.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
 import { WorkspaceStore } from "../../src/workspace/workspace-store.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 
@@ -54,7 +55,6 @@ function catalogYaml(audience: string | null): string {
 
 let workDir: string;
 let catalogFile: string;
-let priorCatalogDir: string | undefined;
 
 beforeEach(() => {
   workDir = join(
@@ -65,14 +65,10 @@ beforeEach(() => {
   mkdirSync(catalogDir, { recursive: true });
   catalogFile = join(catalogDir, "platform.yaml");
   writeFileSync(catalogFile, catalogYaml("catalog-v1"));
-  priorCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
 });
 
 afterEach(() => {
   registerBuiltinCredentialProviders();
-  if (priorCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = priorCatalogDir;
   rmSync(workDir, { recursive: true, force: true });
 });
 
@@ -96,6 +92,7 @@ describe("a boot-started minted connector restarts from the current catalog", ()
     await store.update(ws.id, { connectors: [installed] });
 
     const runtime = await Runtime.start({
+      catalogs: connectorListCatalogs(join(workDir, "catalog")),
       identityProvider: devProvider,
       languageModel: createEchoModel(),
       logging: { disabled: true },
@@ -115,11 +112,16 @@ describe("a boot-started minted connector restarts from the current catalog", ()
       const source = runtime.getRegistryForWorkspace(ws.id).getSource(installed.serverName);
       expect(source).toBeInstanceOf(McpSource);
 
-      writeFileSync(catalogFile, catalogYaml("catalog-v2"));
+      const edit = async (yaml: string) => {
+        writeFileSync(catalogFile, yaml);
+        connectorListCatalogs(join(workDir, "catalog"));
+        await runtime.getCatalogListings().refresh();
+      };
+      await edit(catalogYaml("catalog-v2"));
       expect(await (source as McpSource).restart()).toBe(false);
       expect(audiences).toEqual(["catalog-v2"]);
 
-      writeFileSync(catalogFile, catalogYaml(null));
+      await edit(catalogYaml(null));
       expect(await (source as McpSource).restart()).toBe(false);
       expect(audiences).toEqual(["catalog-v2"]);
     } finally {

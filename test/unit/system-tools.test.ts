@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
-import { createCatalogListings, noCatalogListings } from "../../src/catalogs/reader.ts";
+import { createCatalogListings } from "../../src/catalogs/reader.ts";
 import { resolveFeatures } from "../../src/config/features.ts";
 import type { ConfirmationGate } from "../../src/config/privilege.ts";
 import { createPrivilegeHook, NoopConfirmationGate } from "../../src/config/privilege.ts";
@@ -24,6 +24,7 @@ import type {
 } from "../../src/tools/system-tools.ts";
 import { createSystemTools } from "../../src/tools/system-tools.ts";
 import { listingBytes, listingEntry, pathCatalog } from "../helpers/ai-catalog.ts";
+import { connectorListListings } from "../helpers/connector-list-catalog.ts";
 import { makeInProcessSource } from "../helpers/in-process-source.ts";
 import { stub } from "../helpers/stub.ts";
 
@@ -860,9 +861,11 @@ describe("search — scope: catalog", () => {
     const catalogDir = join(workDir, "catalog");
     mkdirSync(catalogDir);
     writeFileSync(join(catalogDir, "catalog.json"), JSON.stringify({ servers }));
+    // Browse reads listings: the servers as the path catalog an operator mounts.
+    const listings = connectorListListings(catalogDir, workDir);
     return stub<Runtime>({
       getConnectorCatalog: () => new ConnectorCatalog(catalogDir),
-      getCatalogListings: () => noCatalogListings(),
+      getCatalogListings: () => listings,
       getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
     });
   }
@@ -975,16 +978,20 @@ describe("search — scope: catalog", () => {
   });
 
   it("reports failure (not 'No servers found') when the catalog cannot be read", async () => {
-    // The read collects a file-level failure into errors instead of throwing;
-    // the handler must not mistake that for an empty result and tell the agent
-    // the server doesn't exist.
+    // The read collects a listing that cannot be read into errors instead of
+    // throwing; the handler must not mistake that for an empty result and tell
+    // the agent the server doesn't exist.
     workDir = mkdtempSync(join(tmpdir(), "nb-search-catalog-"));
     const unreadable = join(workDir, "unreadable");
     mkdirSync(unreadable);
     chmodSync(unreadable, 0o000);
+    const listings = createCatalogListings({
+      catalogs: [pathCatalog("local", unreadable)],
+      cacheDir: join(workDir, "cache"),
+    });
     const runtime = stub<Runtime>({
       getConnectorCatalog: () => new ConnectorCatalog(unreadable),
-      getCatalogListings: () => noCatalogListings(),
+      getCatalogListings: () => listings,
       getManagedConnectorRegistry: () => managedConnectorRegistryOf([]),
     });
     try {

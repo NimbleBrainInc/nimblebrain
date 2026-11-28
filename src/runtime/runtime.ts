@@ -12,6 +12,7 @@ import { NoopEventSink } from "../adapters/noop-events.ts";
 import { WorkspaceLogSink } from "../adapters/workspace-log-sink.ts";
 import type { ConversationStreamEvents, TurnFrame } from "../api/schemas/events.ts";
 import { loadBrand } from "../brand/index.ts";
+import { listedServerRecords } from "../catalogs/listed-records.ts";
 import {
   type CatalogListings,
   createCatalogListings,
@@ -1126,12 +1127,23 @@ export class Runtime {
     // is the reserved-name list in the gateway module, not this ordering.
     registerGatewayCredentialProviders();
 
+    // The catalogs Browse lists (ADR-0077). A block that cannot work (a
+    // required catalog without a pin, two catalogs of one name) refuses the boot.
+    const catalogs = resolveCatalogs(config.catalogs, { configPath: config.configPath });
+    const catalogListings = createCatalogListings({
+      catalogs,
+      cacheDir: join(workDir, "cache", "catalogs"),
+    });
+
     // Instance OAuth clients, bound to the URL the catalog publishes for each id
     // before any connector starts: every connect resolves its client through this
     // bind, and it is what keeps the operator's secret on the catalog's server.
+    // A listing's bare connector is read first, as every connector-list read is.
     // Throws on a declared client with no client id or secret.
     await bindInstanceOAuthClients(() =>
-      new ConnectorCatalog(catalogLocation(workDir)).catalogByIdMap(),
+      new ConnectorCatalog(catalogLocation(workDir), undefined, async () =>
+        listedServerRecords(await catalogListings.snapshots()),
+      ).catalogByIdMap(),
     );
     // Each remote connection reads its entry's in-band auth errors from the
     // catalog when its source is built: a fresh read, so an edit reaches the
@@ -1150,10 +1162,6 @@ export class Runtime {
     // block over them, read, validated and held to their contracts, so a setup
     // that cannot work refuses the boot here. Nothing is started from the
     // result yet; every plugin turned off reads nothing.
-    // The catalogs Browse lists (ADR-0077). A block that cannot work (a
-    // required catalog without a pin, two catalogs of one name) refuses the boot.
-    const catalogs = resolveCatalogs(config.catalogs, { configPath: config.configPath });
-
     const resolvedPlugins = checkConfiguredPlugins(config.plugins, {
       workDir,
       ...(config.configPath ? { configPath: config.configPath } : {}),
@@ -1395,10 +1403,7 @@ export class Runtime {
       getWorkspaceId,
     );
     rt._hostLoopback = hostLoopback;
-    rt._catalogListings = createCatalogListings({
-      catalogs,
-      cacheDir: join(workDir, "cache", "catalogs"),
-    });
+    rt._catalogListings = catalogListings;
     rt._pluginSkillRoots = pluginSkillRoots;
     rtHolder.rt = rt;
 
@@ -1581,12 +1586,9 @@ export class Runtime {
         catalogEntries: () => rt.getConnectorCatalog().catalogEntries(),
       });
 
-      // Boot-time visibility: the connector catalog is what Browse lists.
-      // Reading it here also fetches the pinned catalog's list on a first boot.
-      // Warn loudly if it yields zero entries (catalog unreachable, empty mount,
-      // mis-set NB_CURATED_CATALOG_DIR) so an empty Browse is diagnosable rather
-      // than silent.
-      await warnIfCatalogEmpty(rt.getConnectorCatalog());
+      // Boot-time visibility: reading the connector list here also fetches the
+      // pinned catalog's list on a first boot, and an empty one is logged.
+      await warnIfCatalogEmpty(new ConnectorCatalog(catalogLocation(workDir)));
       // Read every catalog's listing once in the background, so the first
       // Browse finds a warm copy and an unreachable catalog is logged at boot.
       void rt._catalogListings.snapshots();
@@ -5994,7 +5996,11 @@ export class Runtime {
     owner?: PluginOwner,
     opts: { sharing?: ConnectorCatalog } = {},
   ): ConnectorCatalog {
-    const base = opts.sharing ?? new ConnectorCatalog(catalogLocation(this.getWorkDir()));
+    const base =
+      opts.sharing ??
+      new ConnectorCatalog(catalogLocation(this.getWorkDir()), undefined, async () =>
+        listedServerRecords(await this._catalogListings.snapshots()),
+      );
     return owner ? base.forOwner(() => this.installedServerRecords(owner)) : base;
   }
 

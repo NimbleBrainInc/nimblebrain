@@ -69,6 +69,7 @@ mock.module("@composio/core", () => ({
 }));
 
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { noCatalogListings } from "../../src/catalogs/reader.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { ConnectorCatalogEntry } from "../../src/connectors/catalog/types.ts";
 import { _resetComposioConfigForTest } from "../../src/connectors/providers/composio/config.ts";
@@ -175,6 +176,7 @@ function buildHarness(): Harness {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getConnectorCatalog: () => new ConnectorCatalog(catalogPath),
+    getCatalogListings: () => noCatalogListings(),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,

@@ -69,6 +69,7 @@
     "check:rest-responses": "bun run scripts/check-rest-responses.ts",
     "check:internal-hosts": "bun run scripts/check-internal-hosts.ts",
     "check:web-index-hosts": "bun run scripts/check-web-index-hosts.ts",
+    "catalog:convert": "bun --no-env-file scripts/connector-list-to-ai-catalog.ts",
     "check:catalog-schema": "bun run scripts/check-catalog-schema.ts .environments/plugins-demo/catalog",
     "check:usage-record": "bun run scripts/check-usage-record.ts",
     "check:test-signatures": "bun run scripts/check-test-signatures.ts",

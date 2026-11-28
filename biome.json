@@ -55,9 +55,9 @@
       "packages/conversations/**/*.ts",
       "packages/tasks/**/*.ts",
       "packages/files/**/*.ts",
-      "!**/dist/**",
-      "!web/src/_generated/**",
-      "!web/src/assets/**"
+      "!**/dist",
+      "!web/src/_generated",
+      "!web/src/assets"
     ]
   },
   "overrides": [

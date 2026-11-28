@@ -27,7 +27,6 @@ import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotoco
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
 import type { ToolCallResponse } from "../../src/api/schemas/responses.ts";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import {
   forgetLifecycleBinding,
@@ -43,6 +42,7 @@ import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
 import { McpSource } from "../../src/tools/mcp-source.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { readJson } from "../helpers/http.ts";
@@ -115,16 +115,14 @@ function resetCalls(): void {
 let runtime: Runtime;
 let handle: ServerHandle;
 let baseUrl: string;
-let savedCatalogDir: string | undefined;
 let modern: ReturnType<typeof serveModernLifecycleServer>;
 
 beforeAll(async () => {
   mkdirSync(catalogDir, { recursive: true });
   writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-  savedCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
 
   runtime = await Runtime.start({
+    catalogs: connectorListCatalogs(catalogDir),
     identityProvider: devProvider,
     languageModel: createEchoModel(),
     logging: { disabled: true },
@@ -206,8 +204,6 @@ afterAll(async () => {
   resetLifecycleBindings();
   await runtime.shutdown();
   modern.close();
-  if (savedCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedCatalogDir;
   rmSync(testDir, { recursive: true, force: true });
 });
 

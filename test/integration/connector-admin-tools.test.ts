@@ -25,7 +25,6 @@ import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import type { AdminToolCallPayload } from "../../src/engine/schemas/events.ts";
 import type { EventSink } from "../../src/engine/types.ts";
 import { ensureHooks } from "../../src/hooks/reconcile.ts";
@@ -36,6 +35,7 @@ import { REDACTED_ARGUMENT } from "../../src/permissions/admin-tools.ts";
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 import { type FixtureCall, marked, startLifecycleSource } from "../helpers/lifecycle-server.ts";
@@ -134,16 +134,20 @@ const auditSink: EventSink = {
 
 let runtime: Runtime;
 let handle: ServerHandle;
+
+/** Re-read the catalog after an edit: convert it again and refresh the listing. */
+async function relist(): Promise<void> {
+  connectorListCatalogs(catalogDir);
+  await runtime.getCatalogListings().refresh();
+}
 let baseUrl: string;
-let savedCatalogDir: string | undefined;
 
 beforeAll(async () => {
   mkdirSync(catalogDir, { recursive: true });
   writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-  savedCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
 
   runtime = await Runtime.start({
+    catalogs: connectorListCatalogs(catalogDir),
     identityProvider: devProvider,
     languageModel: recordingModel(),
     logging: { disabled: true },
@@ -173,8 +177,6 @@ afterAll(async () => {
   handle.stop(true);
   stopAllToolSurfaceWatches();
   await runtime.shutdown();
-  if (savedCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedCatalogDir;
   rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -690,13 +692,13 @@ describe("the installed entry's allowedTools (what a connector's apps are told)"
         "adminTools: configure",
       ),
     );
-    runtime.getConnectorCatalog().resetCache();
+    await relist();
     try {
       expect(await allowedToolsIn(MEMBER_WS)).toEqual([]);
       expect(await allowedToolsIn(ADMIN_WS)).toContain("search");
     } finally {
       writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-      runtime.getConnectorCatalog().resetCache();
+      await relist();
     }
   });
 });
@@ -721,7 +723,7 @@ for (const [title, declaration] of [
           declaration,
         ),
       );
-      runtime.getConnectorCatalog().resetCache();
+      await relist();
       resetCalls();
       const member = await mcpClient(MEMBER_WS);
       const admin = await mcpClient(ADMIN_WS);
@@ -745,7 +747,7 @@ for (const [title, declaration] of [
         await member.close();
         await admin.close();
         writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-        runtime.getConnectorCatalog().resetCache();
+        await relist();
       }
     });
   });
@@ -764,7 +766,7 @@ describe("a catalog entry written entirely in snake_case", () => {
         `      ai.nimblebrain/host:\n        host_version: "1.5"\n        admin_tools: [configure]\n`,
       ),
     );
-    runtime.getConnectorCatalog().resetCache();
+    await relist();
     resetCalls();
     const member = await mcpClient(MEMBER_WS);
     const admin = await mcpClient(ADMIN_WS);
@@ -795,7 +797,7 @@ describe("a catalog entry written entirely in snake_case", () => {
       await member.close();
       await admin.close();
       writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-      runtime.getConnectorCatalog().resetCache();
+      await relist();
     }
   });
 });

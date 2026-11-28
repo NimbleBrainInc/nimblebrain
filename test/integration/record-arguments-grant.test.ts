@@ -11,8 +11,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel } from "../helpers/echo-model.ts";
 import { seedWorkspace } from "../helpers/test-workspace.ts";
@@ -86,14 +86,12 @@ const CATALOG_YAML = `servers:
 `;
 
 let runtime: Runtime;
-let savedCatalogDir: string | undefined;
 
 beforeAll(async () => {
   mkdirSync(catalogDir, { recursive: true });
   writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-  savedCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
   runtime = await Runtime.start({
+    catalogs: connectorListCatalogs(catalogDir),
     identityProvider: devProvider,
     languageModel: createEchoModel(),
     logging: { disabled: true },
@@ -117,8 +115,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await runtime.shutdown();
-  if (savedCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedCatalogDir;
   rmSync(testDir, { recursive: true, force: true });
 });
 

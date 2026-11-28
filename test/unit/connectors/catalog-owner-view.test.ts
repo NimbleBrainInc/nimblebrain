@@ -50,8 +50,22 @@ describe("ConnectorCatalog for one owner", () => {
     expect((await list.forOwner(supplied("B")).catalogById("com.notion/mcp"))?.name).toBe("B");
     // Only the owner's views shape what the list says; the list itself is unchanged.
     expect((await list.catalogById("com.notion/mcp"))?.name).toBe("From the list");
-    expect((await list.listings({ installed: false })).map((l) => l.install.url)).toEqual([
-      "https://list.test/mcp",
+    expect((await list.listings()).map((l) => l.install.url)).toEqual(["https://list.test/mcp"]);
+  });
+
+  test("a listing's record comes after the owner's and ahead of the list", async () => {
+    const listed = async () => [
+      {
+        address: "notion@local",
+        detail: serverRecord({ name: "com.notion/mcp", url: "https://l.test/mcp", title: "L" }),
+      },
+    ];
+    const list = new ConnectorCatalog(file, undefined, listed);
+    expect((await list.catalogById("com.notion/mcp"))?.name).toBe("L");
+    expect((await list.forOwner(supplied("A")).catalogById("com.notion/mcp"))?.name).toBe("A");
+    const { servers } = await list.servers();
+    expect(servers.filter((s) => s.detail.name === "com.notion/mcp").map((s) => s.file)).toEqual([
+      "listing notion@local",
     ]);
   });
 

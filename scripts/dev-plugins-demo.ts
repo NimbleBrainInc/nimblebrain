@@ -6,8 +6,10 @@
  * Local developer tooling. It starts the mock MCP servers the connected
  * plugins point at (`scripts/lib/plugins-demo/mock-servers.ts`), seeds
  * `.environments/plugins-demo/` through the runtime's own stores
- * (`scripts/lib/plugins-demo/seed.ts`), then runs `scripts/dev.ts` against it
- * with the demo catalog. The mock servers live in this process, so they stop
+ * (`scripts/lib/plugins-demo/seed.ts`), writes the demo catalog
+ * (`catalog/plugins-demo.yaml`) as the AI Catalog listing its config names
+ * (`listing/ai-catalog.json`, a path catalog), then runs `scripts/dev.ts`
+ * against it. The mock servers live in this process, so they stop
  * when the demo does.
  *
  * Ports: API 27255, Web 27254 (override via `NB_API_PORT` / `NB_WEB_PORT`).
@@ -20,9 +22,11 @@
  */
 
 import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig } from "../src/cli/config.ts";
 import { log } from "../src/observability/log.ts";
+import { convertConnectorList } from "./lib/connector-list-to-ai-catalog.ts";
 import { MOCK_SERVERS } from "./lib/plugins-demo/fixtures.ts";
 import { startMockFleet } from "./lib/plugins-demo/mock-servers.ts";
 import { seedPluginsDemo } from "./lib/plugins-demo/seed.ts";
@@ -31,6 +35,15 @@ const ROOT = dirname(import.meta.dir);
 const ENV_DIR = join(ROOT, ".environments", "plugins-demo");
 const CONFIG_PATH = join(ENV_DIR, "nimblebrain.json");
 const CATALOG_DIR = join(ENV_DIR, "catalog");
+/** The path catalog the demo's config names. */
+const LISTING_DIR = join(ENV_DIR, "listing");
+
+/** Write the demo catalog's servers as the bare-connector listing at `dir`. */
+export function writeDemoListing(dir: string = LISTING_DIR): void {
+  mkdirSync(dir, { recursive: true });
+  const doc = convertConnectorList(CATALOG_DIR, { publisher: "plugins-demo.example" });
+  writeFileSync(join(dir, "ai-catalog.json"), `${JSON.stringify(doc, null, 2)}\n`);
+}
 
 /** The demo's ports: `NB_API_PORT` / `NB_WEB_PORT` from `env`, else 27255 / 27254. */
 export function demoPorts(env: NodeJS.ProcessEnv): { api: string; web: string } {
@@ -39,7 +52,7 @@ export function demoPorts(env: NodeJS.ProcessEnv): { api: string; web: string } 
 
 /**
  * The environment the seed and the runtime both run under: `base` with the
- * demo's workdir, ports, and catalog. `scripts/dev.ts` builds the origins from
+ * demo's workdir and ports. `scripts/dev.ts` builds the origins from
  * these ports.
  */
 export function demoEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -49,7 +62,6 @@ export function demoEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     NB_WORK_DIR: ENV_DIR,
     NB_API_PORT: ports.api,
     NB_WEB_PORT: ports.web,
-    NB_CURATED_CATALOG_DIR: CATALOG_DIR,
   };
 }
 
@@ -60,6 +72,7 @@ async function main(): Promise<void> {
   const { workDir, secrets } = loadConfig({ config: CONFIG_PATH });
   if (workDir !== ENV_DIR) throw new Error(`workDir resolved to ${workDir}, not ${ENV_DIR}`);
 
+  writeDemoListing();
   const fleet = startMockFleet(MOCK_SERVERS);
   const summary = await seedPluginsDemo({ workDir, catalogDir: CATALOG_DIR, fleet, secrets });
   log.info(`[plugins-demo] Seeded ${workDir}`);

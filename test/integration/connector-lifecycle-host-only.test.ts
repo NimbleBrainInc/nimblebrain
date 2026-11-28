@@ -25,7 +25,6 @@ import { join } from "node:path";
 import type { LanguageModelV4, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { type Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { type ServerHandle, startServer } from "../../src/api/server.ts";
-import { CATALOG_DIR_ENV } from "../../src/connectors/catalog/catalog.ts";
 import { IdentityConnectorStore } from "../../src/identity/connector-store.ts";
 import { DEV_IDENTITY } from "../../src/identity/providers/dev.ts";
 import {
@@ -38,6 +37,7 @@ import { dispatchUnattended } from "../../src/orchestrator/unattended-dispatch.t
 import { IdentityToolRouter } from "../../src/runtime/identity-tool-router.ts";
 import { Runtime } from "../../src/runtime/runtime.ts";
 import { stopAllToolSurfaceWatches } from "../../src/tools/connector-surface.ts";
+import { connectorListCatalogs } from "../helpers/connector-list-catalog.ts";
 import { devProvider } from "../helpers/dev-provider.ts";
 import { createEchoModel, type EchoModelResponse } from "../helpers/echo-model.ts";
 import {
@@ -128,16 +128,14 @@ function recordingModel(): LanguageModelV4 {
 let runtime: Runtime;
 let handle: ServerHandle;
 let baseUrl: string;
-let savedCatalogDir: string | undefined;
 let personalServer: FakeConnectorServer;
 
 beforeAll(async () => {
   mkdirSync(catalogDir, { recursive: true });
   writeFileSync(join(catalogDir, "acme.yaml"), CATALOG_YAML);
-  savedCatalogDir = process.env[CATALOG_DIR_ENV];
-  process.env[CATALOG_DIR_ENV] = catalogDir;
 
   runtime = await Runtime.start({
+    catalogs: connectorListCatalogs(catalogDir),
     identityProvider: devProvider,
     languageModel: recordingModel(),
     logging: { disabled: true },
@@ -186,8 +184,6 @@ afterAll(async () => {
   resetReadyNotifications();
   await runtime.shutdown();
   personalServer.close();
-  if (savedCatalogDir === undefined) delete process.env[CATALOG_DIR_ENV];
-  else process.env[CATALOG_DIR_ENV] = savedCatalogDir;
   rmSync(testDir, { recursive: true, force: true });
 });
 

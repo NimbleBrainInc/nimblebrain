@@ -88,10 +88,10 @@ describe("resolveCatalogs", () => {
     expect(() => resolveCatalogs([one, { ...one, name: "other" }])).toThrow(/listed twice/);
   });
 
-  test("the connector list's catalog name is reserved", () => {
-    expect(() => resolveCatalogs([{ source: "/srv/curated", policy: "available" }])).toThrow(
-      /reserved/,
-    );
+  test("no catalog name is reserved: a path catalog may be named curated", () => {
+    const [c] = resolveCatalogs([{ source: "/srv/curated", policy: "available" }]);
+    expect(c?.name).toBe("curated");
+    expect(c?.source).toEqual({ kind: "path", path: "/srv/curated" });
   });
 
   test("refreshMinutes sets the interval and is bounded", () => {
