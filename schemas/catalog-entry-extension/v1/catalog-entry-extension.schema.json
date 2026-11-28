@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.nimblebrain.ai/catalog-entry-extension/v1/catalog-entry-extension.schema.json",
+  "title": "NimbleBrain catalog-entry extension",
+  "description": "The `ai.nimblebrain` entry of an AI Catalog entry's `extensions`: what a NimbleBrain host shows and gates a listed item on without opening its artifact. A listing selects what installs (the entry's `url`, `digest` or inline `data`); what an install produces comes only from the verified artifact, so nothing here is read at install or grants anything. A plugin manifest's `extensions[\"ai.nimblebrain\"]` has its own schema (plugin-extension/v1). Readers ignore fields they do not know.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "const": "https://schemas.nimblebrain.ai/catalog-entry-extension/v1/catalog-entry-extension.schema.json",
+      "type": "string"
+    },
+    "iconUrl": {
+      "minLength": 1,
+      "description": "An http(s) URL of the item's icon, shown where the item is listed.",
+      "type": "string"
+    },
+    "category": {
+      "minLength": 1,
+      "description": "The category the item is listed under, as display text, e.g. \"Sales & CRM\".",
+      "type": "string"
+    },
+    "servers": {
+      "description": "The item's servers, by server key (the key the artifact uses for the server): each one's registry name and auth. It describes what the artifact holds so the listing can be read without it; an install reads the servers from the verified artifact, never from here.",
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "description": "One server the listed item connects: its registry name and how it signs in.",
+          "type": "object",
+          "required": [
+            "name",
+            "auth"
+          ],
+          "properties": {
+            "name": {
+              "minLength": 1,
+              "description": "The server's registry name, e.g. \"com.example/mcp\".",
+              "type": "string"
+            },
+            "auth": {
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "description": "How the server signs in, so a host can say what an install will ask for: `dcr` (the host registers its own OAuth client), `none`, `static` (an OAuth client the operator registers first), `provider` (a credential the host mints), or the id of the broker that holds the session (e.g. `composio`), which only a host that has that broker can install.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "nimblebrainOnly": {
+      "description": "True when only NimbleBrain can run the item: a server it names is brokered, or needs an operator's own OAuth app. It describes the item; it grants nothing.",
+      "type": "boolean"
+    }
+  }
+}

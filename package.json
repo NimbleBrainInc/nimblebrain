@@ -78,6 +78,8 @@
     "emit:contracts": "bun --no-env-file contracts/scripts/emit-contracts.ts",
     "check:plugin-extension": "bun --no-env-file scripts/emit-plugin-extension-schema.ts --check",
     "emit:plugin-extension": "bun --no-env-file scripts/emit-plugin-extension-schema.ts",
+    "check:catalog-entry-extension": "bun --no-env-file scripts/emit-catalog-entry-extension-schema.ts --check",
+    "emit:catalog-entry-extension": "bun --no-env-file scripts/emit-catalog-entry-extension-schema.ts",
     "codegen": "bun run scripts/codegen-web-platform-schemas.ts",
     "gen:host-constants": "cd web && bun run gen:host-constants",
     "check:codegen": "bun run codegen && bun run scripts/check-codegen.ts",

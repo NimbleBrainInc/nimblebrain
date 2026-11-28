@@ -8,10 +8,13 @@
  * `bun run check:plugin-extension` (in `verify:static`) fails when the
  * committed JSON differs from what this source emits.
  *
+ * It describes a manifest (`plugin.json`) only. An AI Catalog entry's
+ * `extensions["ai.nimblebrain"]` has its own shape and schema
+ * (`src/catalogs/entry-extension.ts`, ADR-0077).
+ *
  * Every field is optional and the objects are open, so a catalog plugin that
- * carries only `servers` and `conversationStarters`, and an AI Catalog entry
- * that carries only `nimblebrainOnly`, are both valid, and a later v1 may add
- * fields that an older reader ignores.
+ * carries only `servers` and `conversationStarters` is valid, and a later v1
+ * may add fields that an older reader ignores.
  */
 
 import { resolve } from "node:path";
@@ -127,7 +130,7 @@ export const PluginExtension = Type.Object(
     nimblebrainOnly: Type.Optional(
       Type.Boolean({
         description:
-          "True when only NimbleBrain can run the plugin: a server it names is brokered, or needs an operator's own OAuth app. A catalog derives it from the servers' auth and states it where it lists the plugin (an AI Catalog entry's `extensions[\"ai.nimblebrain\"]`). It describes the plugin; it grants nothing.",
+          "True when only NimbleBrain can run the plugin: a server it names is brokered, or needs an operator's own OAuth app. It describes the plugin; it grants nothing.",
       }),
     ),
     implements: Type.Optional(
@@ -146,7 +149,7 @@ export const PluginExtension = Type.Object(
   {
     title: "NimbleBrain plugin extension",
     description:
-      "The `ai.nimblebrain` entry of an Agent Plugins 1.0 manifest's `extensions` (plugin.json), and of an AI Catalog entry's. It names the plugin's registry servers, its conversation starters, and the contracts it implements and requires. It declares capabilities, never trust: whether a plugin is a system plugin, and where its servers run, are the operator's (nimblebrain.json `plugins`). Other hosts ignore it. Readers ignore fields they do not know.",
+      "The `ai.nimblebrain` entry of an Agent Plugins 1.0 manifest's `extensions` (plugin.json). It names the plugin's registry servers, its conversation starters, and the contracts it implements and requires. It declares capabilities, never trust: whether a plugin is a system plugin, and where its servers run, are the operator's (nimblebrain.json `plugins`). An AI Catalog entry's `extensions[\"ai.nimblebrain\"]` has its own schema (catalog-entry-extension/v1). Other hosts ignore it. Readers ignore fields they do not know.",
   },
 );
 export type PluginExtension = Static<typeof PluginExtension>;

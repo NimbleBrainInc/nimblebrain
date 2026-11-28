@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.nimblebrain.ai/plugin-extension/v1/plugin-extension.schema.json",
   "title": "NimbleBrain plugin extension",
-  "description": "The `ai.nimblebrain` entry of an Agent Plugins 1.0 manifest's `extensions` (plugin.json), and of an AI Catalog entry's. It names the plugin's registry servers, its conversation starters, and the contracts it implements and requires. It declares capabilities, never trust: whether a plugin is a system plugin, and where its servers run, are the operator's (nimblebrain.json `plugins`). Other hosts ignore it. Readers ignore fields they do not know.",
+  "description": "The `ai.nimblebrain` entry of an Agent Plugins 1.0 manifest's `extensions` (plugin.json). It names the plugin's registry servers, its conversation starters, and the contracts it implements and requires. It declares capabilities, never trust: whether a plugin is a system plugin, and where its servers run, are the operator's (nimblebrain.json `plugins`). An AI Catalog entry's `extensions[\"ai.nimblebrain\"]` has its own schema (catalog-entry-extension/v1). Other hosts ignore it. Readers ignore fields they do not know.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -48,7 +48,7 @@
       }
     },
     "nimblebrainOnly": {
-      "description": "True when only NimbleBrain can run the plugin: a server it names is brokered, or needs an operator's own OAuth app. A catalog derives it from the servers' auth and states it where it lists the plugin (an AI Catalog entry's `extensions[\"ai.nimblebrain\"]`). It describes the plugin; it grants nothing.",
+      "description": "True when only NimbleBrain can run the plugin: a server it names is brokered, or needs an operator's own OAuth app. It describes the plugin; it grants nothing.",
       "type": "boolean"
     },
     "implements": {
