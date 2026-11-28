@@ -91,6 +91,7 @@ export function userFacingStartError(err: unknown, raw: string): string {
 
 /** What an unbound lifecycle reads: no workspace has a registry. */
 const NO_WORKSPACE_REGISTRIES: ReadonlyMap<string, ToolRegistry> = new Map();
+const DISCONNECT_REVOKE_TIMEOUT_MS = 15_000;
 
 /** Manifest-derived metadata `seedInstance` accepts for a connector it is seeding,
  *  running or not. */
@@ -1472,6 +1473,7 @@ export class ConnectorLifecycleManager {
       return outcome;
     }
 
+    const revokeAbort = new AbortController();
     const provider = new WorkspaceOAuthProvider({
       clientIdentity: oauthClientIdentity(),
       owner: { type: "workspace", wsId },
@@ -1487,8 +1489,15 @@ export class ConnectorLifecycleManager {
       // src/oauth/mcp-callback-url.ts.
       callbackUrl: mcpAuthCallbackUrl(),
       allowInsecureRemotes: opts.allowInsecureRemotes === true,
+      abortSignal: revokeAbort.signal,
     });
-    const result = await provider.revokeAndDeleteTokens({ connectorUrl: ref.url });
+    const revokeTimeout = setTimeout(() => revokeAbort.abort(), DISCONNECT_REVOKE_TIMEOUT_MS);
+    let result: Awaited<ReturnType<WorkspaceOAuthProvider["revokeAndDeleteTokens"]>>;
+    try {
+      result = await provider.revokeAndDeleteTokens({ connectorUrl: ref.url });
+    } finally {
+      clearTimeout(revokeTimeout);
+    }
 
     await this.teardownConnectionSource(serverName, wsId);
     // A disconnect is deliberate: whatever broke before it, the connection now
