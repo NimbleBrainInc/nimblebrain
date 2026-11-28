@@ -80,12 +80,17 @@ export function withCatalogUi<
   },
 >(
   entries: readonly T[],
-  catalog: readonly ConnectorCatalogEntry[] | null,
+  /** The catalog, or the catalog each workspace's connectors read; `null` keeps the stored `ui`. */
+  catalog:
+    | readonly ConnectorCatalogEntry[]
+    | null
+    | ((wsId: string) => readonly ConnectorCatalogEntry[] | null),
   onMismatch: (wsId: string, serverName: string, entry: ConnectorCatalogEntry) => void = () => {},
 ): T[] {
-  if (catalog === null) return [...entries];
   return entries.map((entry) => {
-    const binding = bindCatalogEntry(entry.connector, catalog);
+    const entries = typeof catalog === "function" ? catalog(entry.wsId) : catalog;
+    if (entries === null) return entry;
+    const binding = bindCatalogEntry(entry.connector, entries);
     if (binding.kind === "uncatalogued") return entry;
     if (binding.kind === "mismatch") onMismatch(entry.wsId, entry.serverName, binding.entry);
     const ui = binding.kind === "bound" ? (binding.entry.ui ?? null) : null;

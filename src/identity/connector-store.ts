@@ -2,7 +2,9 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { serverNameFromRef } from "../connectors/runtime/paths.ts";
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
+import type { InstalledPluginRecord } from "../plugins/installed/record.ts";
 import { writeJsonAtomic } from "../util/atomic-json.ts";
+import { serializePerPerson } from "../workspace/serialize.ts";
 import { IdentityContext } from "./context.ts";
 
 /**
@@ -27,9 +29,9 @@ import { IdentityContext } from "./context.ts";
  * because the ref came from `connectors.json`, not from any workspace.
  *
  * Storage discipline mirrors `WorkspaceStore`: read-modify-write with an
- * atomic (`rename(2)`) commit via `writeJsonAtomic`. No file lock — like
- * `workspace.json`, concurrent writes to one user's record are rare (a user
- * clicking install), and a lost update is re-suppliable on retry.
+ * atomic (`rename(2)`) commit via `writeJsonAtomic`. Every write holds the
+ * person's chain (`serializePerPerson`) across its read, so a connector write
+ * and a plugin-record write to one record never lose each other.
  */
 
 const RECORD_VERSION = 1 as const;
@@ -42,6 +44,8 @@ const RECORD_FILENAME = "connectors.json";
 interface IdentityConnectorRecord {
   version: typeof RECORD_VERSION;
   connectors: ConnectorRef[];
+  /** The plugins installed on this identity from a catalog, in install order (ADR-0077). */
+  plugins?: InstalledPluginRecord[];
 }
 
 export class IdentityConnectorStore {
@@ -73,18 +77,61 @@ export class IdentityConnectorStore {
    * uninstalled identity is indistinguishable from an empty one, by design.
    */
   async list(userId: string): Promise<ConnectorRef[]> {
+    return (await this.#read(userId)).connectors;
+  }
+
+  /** The plugins installed on this identity from a catalog, in install order. */
+  async listPlugins(userId: string): Promise<InstalledPluginRecord[]> {
+    return (await this.#read(userId)).plugins;
+  }
+
+  /**
+   * Write one plugin's record: replace the record of the same address in place
+   * (an update keeps its install order), else append it.
+   */
+  putPlugin(userId: string, record: InstalledPluginRecord): Promise<void> {
+    return serializePerPerson(userId, async () => {
+      const current = await this.#read(userId);
+      const i = current.plugins.findIndex((p) => p.address === record.address);
+      const plugins = [...current.plugins];
+      if (i >= 0) plugins[i] = record;
+      else plugins.push(record);
+      await this.#write(userId, current.connectors, plugins);
+    });
+  }
+
+  /** Remove one plugin's record. Returns whether one was there. */
+  removePlugin(userId: string, address: string): Promise<boolean> {
+    return serializePerPerson(userId, async () => {
+      const current = await this.#read(userId);
+      const plugins = current.plugins.filter((p) => p.address !== address);
+      if (plugins.length === current.plugins.length) return false;
+      await this.#write(userId, current.connectors, plugins);
+      return true;
+    });
+  }
+
+  /**
+   * The user's record. Absent reads as empty, an uninstalled identity being
+   * indistinguishable from an empty one by design. A record missing an array
+   * (hand-edited, partial) reads that array as empty; a JSON *syntax* error
+   * propagates, since a corrupt record is a real fault the caller must see.
+   */
+  async #read(
+    userId: string,
+  ): Promise<{ connectors: ConnectorRef[]; plugins: InstalledPluginRecord[] }> {
     let content: string;
     try {
       content = await readFile(this.#recordPath(userId), "utf-8");
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { connectors: [], plugins: [] };
       throw err;
     }
     const record = JSON.parse(content) as IdentityConnectorRecord;
-    // Defensive against a hand-edited / partial file: a record missing its
-    // array reads as empty rather than throwing. A JSON *syntax* error still
-    // propagates — a corrupt record is a real fault the caller must see.
-    return Array.isArray(record.connectors) ? record.connectors : [];
+    return {
+      connectors: Array.isArray(record.connectors) ? record.connectors : [],
+      plugins: Array.isArray(record.plugins) ? record.plugins : [],
+    };
   }
 
   /**
@@ -104,13 +151,15 @@ export class IdentityConnectorStore {
    * rely on; a re-install therefore updates in place (and moves the entry to
    * the end). Returns the new list.
    */
-  async add(userId: string, ref: ConnectorRef): Promise<ConnectorRef[]> {
+  add(userId: string, ref: ConnectorRef): Promise<ConnectorRef[]> {
     const serverName = serverNameFromRef(ref);
-    const current = await this.list(userId);
-    const next = current.filter((r) => serverNameFromRef(r) !== serverName);
-    next.push(ref);
-    await this.#write(userId, next);
-    return next;
+    return serializePerPerson(userId, async () => {
+      const { connectors: current, plugins } = await this.#read(userId);
+      const next = current.filter((r) => serverNameFromRef(r) !== serverName);
+      next.push(ref);
+      await this.#write(userId, next, plugins);
+      return next;
+    });
   }
 
   /**
@@ -118,20 +167,30 @@ export class IdentityConnectorStore {
    * was removed, `false` if no such connector existed (idempotent
    * uninstall — a no-op is not an error).
    */
-  async remove(userId: string, serverName: string): Promise<boolean> {
-    const current = await this.list(userId);
-    const next = current.filter((r) => serverNameFromRef(r) !== serverName);
-    if (next.length === current.length) return false;
-    await this.#write(userId, next);
-    return true;
+  remove(userId: string, serverName: string): Promise<boolean> {
+    return serializePerPerson(userId, async () => {
+      const { connectors: current, plugins } = await this.#read(userId);
+      const next = current.filter((r) => serverNameFromRef(r) !== serverName);
+      if (next.length === current.length) return false;
+      await this.#write(userId, next, plugins);
+      return true;
+    });
   }
 
-  async #write(userId: string, connectors: ConnectorRef[]): Promise<void> {
+  async #write(
+    userId: string,
+    connectors: ConnectorRef[],
+    plugins: InstalledPluginRecord[],
+  ): Promise<void> {
     const path = this.#recordPath(userId);
     // The user root may not exist yet (a fresh identity that has only ever
     // installed connectors). `recursive: true` is idempotent when it does.
     await mkdir(dirname(path), { recursive: true });
-    const record: IdentityConnectorRecord = { version: RECORD_VERSION, connectors };
+    const record: IdentityConnectorRecord = {
+      version: RECORD_VERSION,
+      connectors,
+      ...(plugins.length > 0 ? { plugins } : {}),
+    };
     await writeJsonAtomic(path, record);
   }
 }

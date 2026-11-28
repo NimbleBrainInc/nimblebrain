@@ -152,15 +152,27 @@ function ok<T>(data: T): ToolSuccessResult<T> {
 /**
  * The outboxes one poller sweep may read.
  *
- * One catalog per sweep, shared by every installed connector's lookup. A
- * catalog read is synchronous, and the sweep resolves a declaration for each
+ * One read of the operator's connector list per sweep, shared by every
+ * workspace's view of it (each adds that workspace's own plugins' records). A
+ * list read is synchronous, and the sweep resolves a declaration for each
  * `(workspace, connector)` pair, so a read per lookup blocks the event loop
  * for the length of the whole sweep on a tenant with many installs.
  */
 export function pollTargets(runtime: Runtime): Promise<PollTarget[]> {
-  const catalog = runtime.getConnectorCatalog();
+  // The operator's list is read once per sweep; each workspace's view of it
+  // adds that workspace's own plugins' records.
+  const list = runtime.getConnectorCatalog();
+  const catalogs = new Map<string, ReturnType<Runtime["getConnectorCatalog"]>>();
+  const catalogFor = (wsId: string) => {
+    let catalog = catalogs.get(wsId);
+    if (!catalog) {
+      catalog = runtime.getConnectorCatalog({ kind: "workspace", wsId }, { sharing: list });
+      catalogs.set(wsId, catalog);
+    }
+    return catalog;
+  };
   return collectPollTargets(runtime.getLifecycle(), (wsId, serverName) =>
-    runtime.getNotificationsDeclaration(wsId, serverName, catalog),
+    runtime.getNotificationsDeclaration(wsId, serverName, catalogFor(wsId)),
   );
 }
 

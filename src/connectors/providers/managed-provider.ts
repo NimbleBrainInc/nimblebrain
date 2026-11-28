@@ -32,6 +32,7 @@ import type { AppContext, AppEnv } from "../../api/types.ts";
 import type { ConnectionHealthProbe } from "../../connectors/runtime/connection-probe.ts";
 import type { BrokeredRef } from "../../connectors/runtime/types.ts";
 import type { ConnectorOwner } from "../../identity/connector-owner.ts";
+import type { CatalogOwner } from "../catalog/binding.ts";
 import type { ConnectorCatalog } from "../catalog/catalog.ts";
 
 /**
@@ -294,7 +295,7 @@ export interface ManagedConnectorProvider {
   recordIdentity?(opts: BrokeredStateOptions, identity: ConnectedAccountIdentity): Promise<void>;
 
   /** A liveness probe for the connection revalidator, wired iff the provider supplies one. */
-  probe?(directory: ConnectorCatalog): ConnectionHealthProbe;
+  probe?(directory: (owner: CatalogOwner) => ConnectorCatalog): ConnectionHealthProbe;
 
   /** The provider's HTTP callback surface, mounted iff the provider supplies it. */
   routes?(ctx: AppContext): Hono<AppEnv>;

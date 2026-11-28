@@ -30,6 +30,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { noCatalogListings } from "../../src/catalogs/reader.ts";
 
 // ── @composio/core mock (hoisted) ───────────────────────────────────
 //
@@ -222,6 +223,8 @@ function buildHarness(): Harness {
     getCredentialStore: () => credStore,
     getWorkspaceStore: () => workspaceStore,
     getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "empty-catalog.yaml")),
+    // No catalogs configured: an id only the connector list could hold.
+    getCatalogListings: () => noCatalogListings(),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,

@@ -23,6 +23,7 @@ import type {
   ProbeTarget,
 } from "../../../connectors/runtime/connection-probe.ts";
 import { log } from "../../../observability/log.ts";
+import type { CatalogOwner } from "../../catalog/binding.ts";
 import type { ConnectorCatalog } from "../../catalog/catalog.ts";
 import { composioAuthConfigId, validateComposioConfig } from "./config.ts";
 import { COMPOSIO_PROVIDER_ID } from "./id.ts";
@@ -31,7 +32,8 @@ import { composioUserId, findActiveComposioConnection } from "./sdk.ts";
 export class ComposioConnectionProbe implements ConnectionHealthProbe {
   readonly providerId = COMPOSIO_PROVIDER_ID;
 
-  constructor(private readonly directory: ConnectorCatalog) {}
+  /** `directory` is the connector list as a connection's owner sees it. */
+  constructor(private readonly directory: (owner: CatalogOwner) => ConnectorCatalog) {}
 
   async probe(target: ProbeTarget, signal: AbortSignal): Promise<ConnectionLiveness> {
     if (signal.aborted) return "indeterminate";
@@ -47,7 +49,9 @@ export class ComposioConnectionProbe implements ConnectionHealthProbe {
 
     let authConfigId = "";
     try {
-      const entry = await this.directory.catalogById(connectorId);
+      const entry = await this.directory({ kind: "workspace", wsId: target.wsId }).catalogById(
+        connectorId,
+      );
       authConfigId = entry?.composio ? composioAuthConfigId(entry.composio.toolkit) : "";
     } catch (err) {
       log.debug(

@@ -474,7 +474,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
   // workspace, server and facet, never by the member who asked.
   const briefingCollector = createBriefingCollector({
     resolveSource: (wsId, serverName) => workspaceMcpSource(runtime, wsId, serverName),
-    connectorTitles: () => runtime.connectorTitles(),
+    connectorTitles: (wsId) => runtime.connectorTitles({ kind: "workspace", wsId }),
   });
 
   const toolDefs: InProcessTool[] = [
@@ -968,7 +968,7 @@ export function createCoreToolDefs(runtime: Runtime): InProcessTool[] {
       inputSchema: { type: "object", properties: {} },
       handler: async (): Promise<ToolResult> => {
         const wsId = runtime.requireWorkspaceId();
-        const catalog = runtime.getConnectorCatalog();
+        const catalog = runtime.getConnectorCatalog({ kind: "workspace", wsId });
         const conversationStarters = await workspaceConversationStarters(wsId, {
           connectors: async (id) => (await runtime.getWorkspaceStore().get(id))?.connectors ?? [],
           catalogByIdMap: () => catalog.catalogByIdMap(),

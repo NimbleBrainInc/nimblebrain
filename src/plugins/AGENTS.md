@@ -45,6 +45,49 @@ registry, and resolving the plugins an operator configures (ADR-0068, ADR-0076).
 - **The extension declares capabilities, never trust.** Nothing in it makes a plugin a
   system plugin, sets where a server runs, or switches a kernel feature.
 
+## Installed from a catalog
+
+- **`installed/` is install's half of a plugin (ADR-0077)**: `artifact.ts` fetches an item's
+  artifact through the bounded fetch, verifies it against the entry's `digest` (inline `data`
+  over its RFC 8785 form, `src/util/jcs.ts`), caches it by digest under `cache/plugins/`, and
+  reads it: the manifest through `parsePluginManifest`, each server's `ServerDetail` from
+  `ai.nimblebrain/servers/<key>.json`, a `stdio` server refused. A bare connector or skill reads
+  as a one-item plugin. `record.ts` is the installed-plugin record and its store.
+- **A record lives beside its owner's connectors**: `workspace.json#plugins`, or
+  `users/<id>/connectors.json#plugins`, in install order, through `Runtime.getPluginRecords()`.
+- **A plugin-supplied server record is its owner's alone.** `Runtime.getConnectorCatalog(owner)`
+  reads that owner's records (`installedServerRecords(owner)`) ahead of the connector list, the
+  first record naming a server in its install order supplying the `ServerDetail`. Every read
+  about an installed connection (display, placements, hooks, admin tools, notifications, broker
+  config, minted transport, in-band auth) names the connection's owner; a read with no owner
+  is the connector list alone. Never build one owner's view from another's records.
+- **The record is written last; every step before it is idempotent.** A connection the plugin
+  created is reused and a skill file rewritten in place, so a stopped install finishes on the
+  next one. Uninstall removes what the record lists (a connection another record names stays),
+  then the record.
+- **A connection a plugin creates carries `installedBy` (its address); one without it is the
+  owner's.** Install reuses a connection only when it carries `installedBy` and either this
+  plugin made it or an installed record names it; anything else is refused, whatever its URL.
+  Uninstall never removes a connection without it. Never infer provenance from a URL.
+- **One install, uninstall or update per owner at a time** (`oneAtATime` in
+  `src/tools/plugin-install.ts`), since each decides from the owner's records. Every write to
+  `workspace.json` or `users/<id>/connectors.json` that computes a field from its own read holds
+  the owner's record chain (`serializePerWorkspace`, `serializePerPerson` in
+  `src/workspace/serialize.ts`), and `WorkspaceStore`'s own mutators hold an inner one, so a
+  connector, record, hook or member write never loses another.
+- **Update moves only the connections this plugin supplies** (it is the first record naming the
+  server). When the new record changes the endpoint, transport, scopes, authorization params or
+  OAuth client, the connection's OAuth records go, then the ref is rewritten in place: it signs in
+  again (`reconnectedConnectors`). Credentials go first so an interruption never stores new settings
+  beside old credentials, and the move is judged against the plugin's current record as well as the
+  stored ref, so a retry of a stopped update repeats it until the new record lands. A brokered
+  connection is left alone (its endpoint is the broker's session). A connection another plugin supplies is not changed.
+- **A plugin's skills are managed** (`src/skills/managed-skills.ts`): a bound one in the owner's
+  `connector-skills/<serverName>/`, any other in `plugin-skills/<address>/`, each marked by
+  provenance `plugin:<address>:<skill>`. The skill tools refuse to write any file in either
+  store and offer `skills__copy`. Never run the connector-skill resolver for a plugin install
+  (`bindSkills: false`).
+
 ## Defaults ship in the box
 
 - **The default plugins are configuration, in `src/config/plugins.ts` (`DEFAULT_PLUGINS`)**: the

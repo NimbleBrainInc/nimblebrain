@@ -80,6 +80,12 @@ export declare const PlatformToolCatalog: {
                 id: import("@sinclair/typebox").TString;
             }>;
         };
+        readonly copy: {
+            readonly input: import("@sinclair/typebox").TObject<{
+                id: import("@sinclair/typebox").TString;
+                name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+            }>;
+        };
         readonly activate: {
             readonly input: import("@sinclair/typebox").TObject<{
                 id: import("@sinclair/typebox").TString;

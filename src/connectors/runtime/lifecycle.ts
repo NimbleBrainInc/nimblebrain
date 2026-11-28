@@ -1111,15 +1111,18 @@ export class ConnectorLifecycleManager {
         url: new URL(ref.url),
         // Resolved like the boot path, so Reconnect / `/v1/mcp-auth/initiate`
         // builds the same transport a restart would.
-        transportConfig: (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+        transportConfig: (
+          await resolveRefTransport(ref, this.catalogReader(), { kind: "workspace", wsId })
+        ).transportConfig,
         resolveTransportConfig: async () =>
-          (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+          (await resolveRefTransport(ref, this.catalogReader(), { kind: "workspace", wsId }))
+            .transportConfig,
         // Honor the per-call flag, same source the OAuth provider above and the
         // startup-time validateConnectorUrl use — not the manager default — so the
         // transport's SSRF guard agrees with what this install was authorized for.
         allowInsecure: opts.allowInsecureRemotes === true,
         authProvider: provider,
-        ...(await catalogTransportOptions(ref)),
+        ...(await catalogTransportOptions(ref, { kind: "workspace", wsId })),
       },
       this.eventSink,
       composeConnectorMcpContext(this.resolveConnectorMcpDeps(wsId), serverName),
@@ -1511,25 +1514,36 @@ export class ConnectorLifecycleManager {
   }
 
   /**
-   * Point an installed connection at a replaced pre-registered OAuth client
-   * (`oauthClient`) and make it sign in again.
+   * Point an installed connection at a ref whose credentials do not carry
+   * over (a replaced pre-registered OAuth client, or a new endpoint, client or
+   * scopes from a plugin update) and make it sign in again.
    *
-   * Tokens, the PKCE verifier, and any identity were minted for the previous
-   * client, which the vendor will not accept from the new one, so every OAuth
-   * record goes. Nothing is revoked upstream: revocation authenticates as the
-   * client that minted the tokens, and its secret has already been replaced.
-   * The connection lands in `not_authenticated`, so the next Connect runs
-   * `startAuth` with `ref`'s client.
+   * Tokens, the PKCE verifier, the DCR registration and any identity were
+   * minted for the previous settings, which the vendor will not accept under
+   * the new ones (and which must never be sent to another origin), so every
+   * OAuth record goes. Nothing is revoked upstream: revocation authenticates as
+   * the client that minted the tokens, which may already be replaced. The
+   * connection lands in `not_authenticated`, so the next Connect runs
+   * `startAuth` with `ref`.
    *
-   * The caller persists `ref` to the workspace record; this updates the copy the
-   * live instance reads. No-op when the connector is not installed here.
+   * The caller persists `ref` to the workspace record; run before that write,
+   * an interruption never leaves the new settings stored beside the old
+   * credentials. This updates the copy the live instance reads. With no live
+   * instance only the records go. A record that cannot be deleted throws, and
+   * the live instance keeps its previous ref, matching what is stored.
    */
-  async replaceOAuthClient(serverName: string, wsId: string, ref: ConnectorRef): Promise<void> {
+  async replaceConnectionRef(serverName: string, wsId: string, ref: ConnectorRef): Promise<void> {
     const instance = this.instances.get(`${serverName}|${wsId}`);
+    const previous = instance?.ref;
+    if (instance) instance.ref = { ...ref };
+    try {
+      if (instance) await this.teardownConnectionSource(serverName, wsId);
+      await new McpOAuthRecords({ owner: { type: "workspace", wsId }, serverName }).deleteAll();
+    } catch (err) {
+      if (instance) instance.ref = previous;
+      throw err;
+    }
     if (!instance) return;
-    instance.ref = { ...ref };
-    await this.teardownConnectionSource(serverName, wsId);
-    await new McpOAuthRecords({ owner: { type: "workspace", wsId }, serverName }).deleteAll();
     this.recordConnectionStateChange(
       serverName,
       wsId,
@@ -2157,12 +2171,15 @@ export class ConnectorLifecycleManager {
         {
           type: "remote",
           url: new URL(ref.url),
-          transportConfig: (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+          transportConfig: (
+            await resolveRefTransport(ref, this.catalogReader(), { kind: "person", userId })
+          ).transportConfig,
           resolveTransportConfig: async () =>
-            (await resolveRefTransport(ref, this.catalogReader())).transportConfig,
+            (await resolveRefTransport(ref, this.catalogReader(), { kind: "person", userId }))
+              .transportConfig,
           allowInsecure: opts.allowInsecureRemotes === true,
           authProvider: provider,
-          ...(await catalogTransportOptions(ref)),
+          ...(await catalogTransportOptions(ref, { kind: "person", userId })),
         },
         this.eventSink,
         composeConnectorMcpContext(undefined, serverName),

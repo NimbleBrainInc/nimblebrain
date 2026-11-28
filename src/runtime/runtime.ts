@@ -30,6 +30,7 @@ import {
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
 import { getNimbleBrainHostMeta } from "../connectors/catalog/host-meta.ts";
+import type { ServerDetail } from "../connectors/catalog/server-detail.ts";
 import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
@@ -221,6 +222,13 @@ import {
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
 import { type BoundServer, startBoundServers, stopBoundServers } from "../plugins/bound-servers.ts";
 import { checkConfiguredPlugins, type ResolvedPlugins } from "../plugins/index.ts";
+import {
+  createPluginRecordStore,
+  type InstalledPluginRecord,
+  type PluginOwner,
+  type PluginRecordStore,
+  sameOwner,
+} from "../plugins/installed/record.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -266,6 +274,7 @@ import {
   parseSkillFile,
   partitionSkills,
 } from "../skills/loader.ts";
+import { loadManagedPoolSkills, managedSkillRoots } from "../skills/managed-skills.ts";
 import { type SkillMatch, SkillMatcher } from "../skills/matcher.ts";
 import { partitionSkillsByRole } from "../skills/select.ts";
 import {
@@ -816,6 +825,14 @@ export class Runtime {
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
   /** The configured catalogs' listings, which Browse reads; see {@link getCatalogListings}. */
   _catalogListings: CatalogListings = noCatalogListings();
+  /** Installed-plugin records, per owner; see {@link getPluginRecords}. */
+  private _pluginRecords: PluginRecordStore | null = null;
+  /** Server records an install in progress connects with, before its record is written, by owner. */
+  private _pendingServerRecords: Array<{
+    owner: PluginOwner;
+    address: string;
+    detail: ServerDetail;
+  }> = [];
   private _identityProvider: IdentityProvider;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -1117,9 +1134,7 @@ export class Runtime {
     // Each remote connection reads its entry's in-band auth errors from the
     // catalog when its source is built: a fresh read, so an edit reaches the
     // next connection without a copy on the ref going stale.
-    setInBandAuthErrorsCatalog(() =>
-      new ConnectorCatalog(catalogLocation(workDir)).catalogEntries(),
-    );
+    setInBandAuthErrorsCatalog((owner) => rt.getConnectorCatalog(owner).catalogEntries());
 
     // Derive the override-file path when the caller supplied a configPath
     // but not an explicit override path. The CLI's loadConfig already
@@ -1272,7 +1287,7 @@ export class Runtime {
     // A minted fleet connector's credential settings come from its catalog entry
     // at every start, never from the copy its install stored. A fresh catalog per
     // read, so an operator's catalog edit reaches the next start.
-    lifecycle.setCatalogReader(() => rt.getConnectorCatalog().catalogEntries());
+    lifecycle.setCatalogReader((owner) => rt.getConnectorCatalog(owner).catalogEntries());
 
     // Wire the connection-running notification path so URL connectors
     // whose interactive OAuth completes (after the user clicks Connect
@@ -1480,7 +1495,11 @@ export class Runtime {
             ? rt.getLifecycle().getInstance(serverName, owner.workspaceId)?.ref
             : await new IdentityConnectorStore({ workDir }).get(owner.userId, serverName);
         if (!ref) return undefined;
-        return telemetryCatalogId(ref, await rt.getConnectorCatalog().catalogEntries());
+        const catalogOwner: PluginOwner =
+          "workspaceId" in owner
+            ? { kind: "workspace", wsId: owner.workspaceId }
+            : { kind: "person", userId: owner.userId };
+        return telemetryCatalogId(ref, await rt.getConnectorCatalog(catalogOwner).catalogEntries());
       });
       // Make the host-resources factory accessible on `rt` so non-lifecycle
       // install paths (connector-tools, boot reload) can pull deps directly.
@@ -1526,7 +1545,7 @@ export class Runtime {
         placementRegistry,
         withCatalogUi(
           workspaceConnectorEntries,
-          await bootCatalogEntries(rt),
+          await bootCatalogEntries(rt, workspaceConnectorEntries),
           (wsId, serverName, entry) => rt.warnCatalogMismatch(wsId, serverName, entry),
         ),
       );
@@ -4382,7 +4401,7 @@ export class Runtime {
   async buildAppsList(workspaceId: string): Promise<PromptAppInfo[]> {
     const instances = this.getConnectorInstancesForWorkspace(workspaceId);
     const registry = this._workspaceRegistries.get(workspaceId);
-    const titles = await this.connectorTitles();
+    const titles = await this.connectorTitles({ kind: "workspace", wsId: workspaceId });
 
     const apps: PromptAppInfo[] = [];
     for (const instance of instances) {
@@ -4399,9 +4418,9 @@ export class Runtime {
    * is absent, and callers show its server name. A catalog read that fails
    * yields no titles rather than failing the caller, which only displays them.
    */
-  async connectorTitles(): Promise<ReadonlyMap<string, string>> {
+  async connectorTitles(owner?: PluginOwner): Promise<ReadonlyMap<string, string>> {
     try {
-      return catalogTitleByServerName(await this.getConnectorCatalog().catalogEntries());
+      return catalogTitleByServerName(await this.getConnectorCatalog(owner).catalogEntries());
     } catch (err) {
       log.warn("[runtime] connector titles unavailable; showing server names", {
         error: err instanceof Error ? err.message : String(err),
@@ -5260,7 +5279,7 @@ export class Runtime {
     await seedWorkspaceConnectorInstances(
       this.lifecycle,
       this.placementRegistry,
-      withCatalogUi(entries, await bootCatalogEntries(this), (wsId, serverName, entry) =>
+      withCatalogUi(entries, await bootCatalogEntries(this, entries), (wsId, serverName, entry) =>
         this.warnCatalogMismatch(wsId, serverName, entry),
       ),
     );
@@ -5324,7 +5343,7 @@ export class Runtime {
       // A minted fleet connector starts with its catalog entry's credential
       // settings, or not at all. A fresh catalog per read: the source keeps
       // this reader for its restarts, which must see the operator's edits.
-      readCatalog: () => this.getConnectorCatalog().catalogEntries(),
+      readCatalog: (owner) => this.getConnectorCatalog(owner).catalogEntries(),
       // A brokered connector's boot readiness is its provider's answer, not a
       // token file — the same predicate `seedUrlConnectionState` consumes.
       managedConnectors: this.getManagedConnectorRegistry(),
@@ -5403,7 +5422,7 @@ export class Runtime {
   async getNotificationsDeclaration(
     wsId: string,
     serverName: string,
-    catalog: ConnectorCatalog = this.getConnectorCatalog(),
+    catalog: ConnectorCatalog = this.getConnectorCatalog({ kind: "workspace", wsId }),
   ): Promise<NotificationsDeclaration | undefined> {
     return (await this.trustedCatalogEntryFor(wsId, serverName, catalog))?.notifications;
   }
@@ -5753,7 +5772,7 @@ export class Runtime {
    * has no tools to list or call, so its binding is read when it does.
    */
   private async connectorGatesFor(wsId: string): Promise<Map<string, ConnectorGates>> {
-    const out = new Map<string, ConnectorGates>(await this.catalogAdminToolsByServer());
+    const out = new Map<string, ConnectorGates>(await this.catalogAdminToolsByServer(wsId));
     const sources = this._workspaceRegistries.get(wsId)?.getSources() ?? [];
     const wires = await Promise.all(
       sources.map(
@@ -5788,9 +5807,12 @@ export class Runtime {
    * ref stopped binding, for example after the entry's URL changed. The catalog
    * read refuses colliding names, so a name is one entry.
    */
-  private async catalogAdminToolsByServer(): Promise<Map<string, ConnectorGates>> {
+  private async catalogAdminToolsByServer(wsId: string): Promise<Map<string, ConnectorGates>> {
     const out = new Map<string, ConnectorGates>();
-    const { servers, refused } = await this.getConnectorCatalog().servers();
+    const { servers, refused } = await this.getConnectorCatalog({
+      kind: "workspace",
+      wsId,
+    }).servers();
     for (const { detail } of [...servers, ...refused]) {
       const adminTools = parseAdminToolsDeclaration(getNimbleBrainHostMeta(detail), detail.name);
       if (adminTools) out.set(slugifyServerName(detail.name), { adminTools });
@@ -5830,7 +5852,7 @@ export class Runtime {
   private async trustedCatalogEntryFor(
     wsId: string,
     serverName: string,
-    catalog: ConnectorCatalog = this.getConnectorCatalog(),
+    catalog: ConnectorCatalog = this.getConnectorCatalog({ kind: "workspace", wsId }),
   ): Promise<ConnectorCatalogEntry | undefined> {
     return (await this.boundCatalogEntries(wsId, catalog)).get(serverName);
   }
@@ -5850,7 +5872,7 @@ export class Runtime {
    */
   private async boundCatalogEntries(
     wsId: string,
-    catalog: ConnectorCatalog = this.getConnectorCatalog(),
+    catalog: ConnectorCatalog = this.getConnectorCatalog({ kind: "workspace", wsId }),
   ): Promise<Map<string, ConnectorCatalogEntry>> {
     const [ws, entries] = await Promise.all([
       this._workspaceStore.get(wsId),
@@ -5923,8 +5945,75 @@ export class Runtime {
    * come from. Per-request instance so its read cache lives exactly as
    * long as the request that opened it.
    */
-  getConnectorCatalog(): ConnectorCatalog {
-    return new ConnectorCatalog(catalogLocation(this.getWorkDir()));
+  /**
+   * The connector list, as `owner` sees it: the server records the plugins
+   * that owner installed supplied, first per name in its install order, ahead
+   * of the operator's list. One owner's plugins never shape another owner's
+   * connection, so a read about an installed connection names its owner; with
+   * none, the read is the operator's list alone. `sharing` reuses another
+   * catalog's read of the operator's list, for a sweep over many owners.
+   */
+  getConnectorCatalog(
+    owner?: PluginOwner,
+    opts: { sharing?: ConnectorCatalog } = {},
+  ): ConnectorCatalog {
+    const base = opts.sharing ?? new ConnectorCatalog(catalogLocation(this.getWorkDir()));
+    return owner ? base.forOwner(() => this.installedServerRecords(owner)) : base;
+  }
+
+  /** The installed-plugin records of every owner (ADR-0077), stored beside each owner's connectors. */
+  getPluginRecords(): PluginRecordStore {
+    if (!this._pluginRecords) {
+      this._pluginRecords = createPluginRecordStore({
+        workspaces: this.getWorkspaceStore(),
+        workDir: this.getWorkDir(),
+      });
+    }
+    return this._pluginRecords;
+  }
+
+  /**
+   * The server records `owner`'s installed plugins supplied, in its install
+   * order, then those an install for it is connecting with: what the
+   * connector list reads ahead of its own for that owner.
+   */
+  async installedServerRecords(
+    owner: PluginOwner,
+  ): Promise<Array<{ address: string; detail: ServerDetail }>> {
+    let records: InstalledPluginRecord[] = [];
+    try {
+      records = await this.getPluginRecords().list(owner);
+    } catch (err) {
+      log.warn(`[plugins] installed-plugin records cannot be read: ${String(err)}`);
+    }
+    return [
+      ...records.flatMap((r) =>
+        r.connectors.map((c) => ({ address: r.address, detail: c.server })),
+      ),
+      ...this._pendingServerRecords
+        .filter((p) => sameOwner(p.owner, owner))
+        .map(({ address, detail }) => ({ address, detail })),
+    ];
+  }
+
+  /**
+   * Run `fn` with `records` visible to `owner`'s connector list, behind its
+   * installed plugins': an install connects its servers before it writes its
+   * record (the record comes last), and the connect path reads each server's
+   * placements and declarations from the connector list.
+   */
+  async withPendingServerRecords<T>(
+    owner: PluginOwner,
+    records: Array<{ address: string; detail: ServerDetail }>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const pending = records.map((r) => ({ owner, ...r }));
+    this._pendingServerRecords.push(...pending);
+    try {
+      return await fn();
+    } finally {
+      this._pendingServerRecords = this._pendingServerRecords.filter((r) => !pending.includes(r));
+    }
   }
 
   /**
@@ -6602,15 +6691,35 @@ export class Runtime {
 
     // No workspace in the request (the org and profile settings pages): there
     // is no workspace tier to merge, so org and user skills list as themselves.
+    // A plugin's unbound managed skills join their owner's pool ahead of the
+    // owner's authored skills, read-only and named `plugin:<address>:<skill>`.
     const workspacePool = wsId
-      ? loadScopedSkills(this.getWorkspaceContext(wsId).getDataPath("skills"), "workspace")
+      ? [
+          ...loadManagedPoolSkills(
+            managedSkillRoots(workDir, { kind: "workspace", wsId }).pluginSkills,
+          ),
+          ...loadScopedSkills(this.getWorkspaceContext(wsId).getDataPath("skills"), "workspace"),
+        ]
       : [];
 
     const userPool = userId
-      ? loadUserTierSkills(workDir, userId, options.keepOffHere ? null : wsId)
+      ? [
+          ...this.userManagedSkills(workDir, userId, options.keepOffHere ? null : wsId),
+          ...loadUserTierSkills(workDir, userId, options.keepOffHere ? null : wsId),
+        ]
       : [];
 
     return mergeScopedSkills(orgPool, workspacePool, userPool);
+  }
+
+  /** A person's plugins' unbound managed skills, less the ones they turned off in `wsId`. */
+  private userManagedSkills(workDir: string, userId: string, wsId: string | null): Skill[] {
+    const skills = loadManagedPoolSkills(
+      managedSkillRoots(workDir, { kind: "person", userId }).pluginSkills,
+    );
+    if (!wsId || skills.length === 0) return skills;
+    const off = skillsOffIn(workDir, userId, wsId);
+    return off.size === 0 ? skills : skills.filter((s) => !off.has(s.manifest.name));
   }
 
   /**
@@ -7219,22 +7328,32 @@ function registerPlatformPlacements(
 }
 
 /**
- * The catalog, for the boot seed's host UI. A catalog that cannot be read yields
- * `null`, which leaves every connector with its stored `ui`: a bad catalog file
- * must not take every app out of the shell.
+ * The catalog each workspace's connectors read for the boot seed's host UI: the
+ * operator's list, with that workspace's installed plugins' records ahead of it.
+ * A catalog that cannot be read yields `null` for its workspaces, which leaves
+ * each of their connectors with its stored `ui`: a bad catalog file must not
+ * take every app out of the shell.
  */
-async function bootCatalogEntries(rt: Runtime): Promise<ConnectorCatalogEntry[] | null> {
-  try {
-    return await rt.getConnectorCatalog().catalogEntries();
-  } catch (err) {
-    log.warn(
-      "[connectors] catalog unreadable at boot; installed connectors keep their stored host UI",
-      {
-        error: err instanceof Error ? err.message : String(err),
-      },
-    );
-    return null;
+async function bootCatalogEntries(
+  rt: Runtime,
+  entries: readonly { wsId: string }[],
+): Promise<(wsId: string) => ConnectorCatalogEntry[] | null> {
+  const read = async (owner?: PluginOwner): Promise<ConnectorCatalogEntry[] | null> => {
+    try {
+      return await rt.getConnectorCatalog(owner).catalogEntries();
+    } catch (err) {
+      log.warn(
+        "[connectors] catalog unreadable at boot; installed connectors keep their stored host UI",
+        { error: err instanceof Error ? err.message : String(err) },
+      );
+      return null;
+    }
+  };
+  const byWorkspace = new Map<string, ConnectorCatalogEntry[] | null>();
+  for (const wsId of new Set(entries.map((e) => e.wsId))) {
+    byWorkspace.set(wsId, await read({ kind: "workspace", wsId }));
   }
+  return (wsId) => byWorkspace.get(wsId) ?? null;
 }
 
 /**

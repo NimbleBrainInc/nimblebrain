@@ -30,6 +30,7 @@ import type { PermissionStore } from "../../permissions/permission-store.ts";
 import { stopWatchingToolSurface } from "../../tools/connector-surface.ts";
 import type { CredentialStore } from "../../tools/credential-store.ts";
 import type { ToolRegistry } from "../../tools/registry.ts";
+import { serializePerWorkspace } from "../../workspace/serialize.ts";
 import type { WorkspaceStore } from "../../workspace/workspace-store.ts";
 import type { ConnectorLifecycleManager } from "./lifecycle.ts";
 import { matchesServerName } from "./paths.ts";
@@ -226,12 +227,14 @@ async function stripUninstalledConnectorEntry(
   serverName: string,
 ): Promise<void> {
   const store = deps.getWorkspaceStore();
-  const wsAfter = await store.get(wsId);
-  if (!wsAfter) return;
-  const filtered = wsAfter.connectors.filter((b) => !matchesServerName(b, serverName));
-  if (filtered.length !== wsAfter.connectors.length) {
-    await store.update(wsId, { connectors: filtered });
-  }
+  await serializePerWorkspace(wsId, async () => {
+    const wsAfter = await store.get(wsId);
+    if (!wsAfter) return;
+    const filtered = wsAfter.connectors.filter((b) => !matchesServerName(b, serverName));
+    if (filtered.length !== wsAfter.connectors.length) {
+      await store.update(wsId, { connectors: filtered });
+    }
+  });
 }
 
 /**

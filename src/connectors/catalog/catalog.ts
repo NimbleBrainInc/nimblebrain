@@ -5,12 +5,21 @@
  *
  * It reads one list, validates and safety-scrubs every entry, projects the
  * survivors, and serves the lookup tables the Configure page and the installed
- * list read. Browse is built from catalog listings (`src/catalogs/browse.ts`),
- * and takes each row's install action from here, because install re-resolves a
- * row by its server's registry name to this list's record (ADR-0077, step 1;
- * a later step installs from the entry's artifact instead).
+ * list read. Browse is built from catalog listings (`src/catalogs/browse.ts`)
+ * and takes from here only the setup a row shows (an OAuth client, a broker's
+ * fields) that a listing does not carry. Installing a catalog item reads its
+ * artifact, never this list; only a row of a mounted directory no listing
+ * names installs from it (the reserved catalog `curated`).
  *
- * **Where the list comes from** (`catalogLocation`), one source at a time:
+ * **An owner's installed plugins' records come first.** A plugin installed
+ * from a catalog (ADR-0077) carries each server's record in its artifact, and
+ * its installed record keeps it. A catalog built for one owner (a workspace or
+ * a person, `Runtime.getConnectorCatalog(owner)`) reads that owner's records
+ * ahead of the list below, first per name in its install order, so a
+ * connection reads the record of the plugin its own owner installed, never
+ * another owner's. A catalog built for no owner is the list alone.
+ *
+ * **Where the rest of the list comes from** (`catalogLocation`), one source at a time:
  *
  * - **The pinned plugin catalog**, by default: the connector list of the catalog
  *   at `NB_PLUGIN_CATALOG_URL` (catalog.nimblebrain.ai), verified against the
@@ -117,17 +126,46 @@ export async function warnIfCatalogEmpty(catalog: ConnectorCatalog): Promise<voi
   if (servers.length > 0) return;
   const why = errors.length > 0 ? ` (${errors.map((e) => e.message).join("; ")})` : "";
   log.warn(
-    `[catalog] the connector list resolved to 0 entries${why} — nothing in Browse can be ` +
-      `installed until the plugin catalog is reachable (NB_PLUGIN_CATALOG_URL) or ` +
-      `${CATALOG_DIR_ENV} names a non-empty directory.`,
+    `[catalog] the connector list resolved to 0 entries${why} — Browse leaves out the rows ` +
+      `whose setup only it describes (static OAuth apps, brokers) until the plugin catalog is ` +
+      `reachable (NB_PLUGIN_CATALOG_URL) or ${CATALOG_DIR_ENV} names a non-empty directory.`,
   );
 }
+
+/**
+ * The server records one owner's installed plugins supplied (ADR-0077), each
+ * tagged with the plugin that supplied it, in that owner's install order. Read
+ * ahead of the connector list, so what an owner's connection reads is its own
+ * plugin's record.
+ */
+export type InstalledServerRecords = () => Promise<
+  Array<{ address: string; detail: ServerDetail }>
+>;
+
+/** What a record an installed plugin supplied names as its file. */
+const INSTALLED_FILE_PREFIX = "plugin ";
 
 export class ConnectorCatalog {
   /** Memoized `servers()` result for this instance. */
   private cache: Promise<AggregatedServers> | null = null;
 
-  constructor(private location: CatalogLocation) {}
+  /** The operator list's read, shared with every view {@link forOwner} makes. */
+  private list: { read: Promise<AggregatedServers> | null } = { read: null };
+
+  constructor(
+    private location: CatalogLocation,
+    private installed?: InstalledServerRecords,
+  ) {}
+
+  /**
+   * The same list as `installed`'s owner sees it, sharing this instance's read
+   * of the operator's list: a sweep over many owners reads the list once.
+   */
+  forOwner(installed: InstalledServerRecords): ConnectorCatalog {
+    const view = new ConnectorCatalog(this.location, installed);
+    view.list = this.list;
+    return view;
+  }
 
   /**
    * Read the catalog directory and return the raw `ServerDetail[]`
@@ -144,14 +182,15 @@ export class ConnectorCatalog {
 
   /**
    * Every installable record as an install action's listing, first wins by id:
-   * what Browse takes each row's `install` from, and what `listingById`
-   * resolves. A record that is not installable (no remote, an unsupported
+   * what Browse takes each row's setup from, and what `listingById` resolves.
+   * `installed: false` leaves out the records installed plugins supplied. A record that is not installable (no remote, an unsupported
    * transport) is logged and left out.
    */
-  async listings(): Promise<CatalogListing[]> {
+  async listings(opts: { installed?: boolean } = {}): Promise<CatalogListing[]> {
     const { servers } = await this.servers();
     const out = new Map<string, CatalogListing>();
     for (const { file, detail } of servers) {
+      if (opts.installed === false && file.startsWith(INSTALLED_FILE_PREFIX)) continue;
       const listing = projectServerDetailToCatalogListing(detail);
       if (!listing) {
         log.warn(
@@ -224,14 +263,41 @@ export class ConnectorCatalog {
     return new Map(entries.map((e) => [e.id, e]));
   }
 
+  /**
+   * Whether the list is a directory the operator mounted (`NB_CURATED_CATALOG_DIR`)
+   * rather than the pinned catalog's connector list. A mounted directory's own
+   * records are rows and install from it; the pinned list only supplies setup.
+   */
+  isMounted(): boolean {
+    return typeof this.location === "string";
+  }
+
   /** Drop the per-instance memoization. Test / admin escape hatch. */
   resetCache(): void {
     this.cache = null;
+    this.list = { read: null };
   }
 
   // ── internals ────────────────────────────────────────────────────
 
   private async read(): Promise<AggregatedServers> {
+    const [installed, list] = await Promise.all([this.readInstalled(), this.readList()]);
+    if (installed.length === 0) return list;
+    const named = new Set(installed.map((s) => s.detail.name));
+    return {
+      servers: [...installed, ...list.servers.filter((s) => !named.has(s.detail.name))],
+      refused: list.refused.filter((s) => !named.has(s.detail.name)),
+      errors: list.errors,
+    };
+  }
+
+  /** The operator's list alone, read once for this instance and every view sharing it. */
+  private readList(): Promise<AggregatedServers> {
+    if (!this.list.read) this.list.read = this.readListOnce();
+    return this.list.read;
+  }
+
+  private async readListOnce(): Promise<AggregatedServers> {
     const file: CatalogFile =
       typeof this.location === "string" ? { path: this.location } : await this.location();
     if ("error" in file) {
@@ -265,6 +331,19 @@ export class ConnectorCatalog {
         continue;
       }
       out.servers.push({ file: source, detail });
+    }
+    return out;
+  }
+
+  /** The installed plugins' records, first per name; their install already validated each. */
+  private async readInstalled(): Promise<Array<{ file: string; detail: ServerDetail }>> {
+    if (!this.installed) return [];
+    const seen = new Set<string>();
+    const out: Array<{ file: string; detail: ServerDetail }> = [];
+    for (const { address, detail } of await this.installed()) {
+      if (seen.has(detail.name)) continue;
+      seen.add(detail.name);
+      out.push({ file: `${INSTALLED_FILE_PREFIX}${address}`, detail });
     }
     return out;
   }

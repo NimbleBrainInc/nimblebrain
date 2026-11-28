@@ -15,7 +15,11 @@ import type { ToolRegistry } from "../../tools/registry.ts";
 import { WorkspaceOAuthProvider } from "../../tools/workspace-oauth-provider.ts";
 import type { WorkspaceContext } from "../../workspace/context.ts";
 import { resolveWorkspaceDisplayName } from "../../workspace/workspace-store.ts";
-import { type CatalogEntriesReader, resolveMintedTransport } from "../catalog/binding.ts";
+import {
+  type CatalogEntriesReader,
+  type CatalogOwner,
+  resolveMintedTransport,
+} from "../catalog/binding.ts";
 import type { ConnectorCatalogEntry } from "../catalog/types.ts";
 import { connectorHasStaticAuth } from "./connector-auth.ts";
 import { catalogTransportOptions } from "./in-band-auth-errors.ts";
@@ -409,9 +413,17 @@ export class FleetConnectorUnavailableError extends Error {
  * ref whose catalog cannot be read (including `NO_CATALOG`), or no longer
  * offers it, throws `FleetConnectorUnavailableError`.
  */
+/** Whose connection a start is for, from the context it was given. */
+function catalogOwnerOf(opts: StartConnectorOpts): CatalogOwner | undefined {
+  if (opts.identityOwner) return { kind: "person", userId: opts.identityOwner.userId };
+  if (opts.workspaceContext) return { kind: "workspace", wsId: opts.workspaceContext.workspaceId };
+  return undefined;
+}
+
 export async function resolveRefTransport(
   ref: ConnectorRef,
   readCatalog: CatalogEntriesReader,
+  owner?: CatalogOwner,
 ): Promise<{
   transportConfig: RemoteTransportConfig | undefined;
   fleetInternal: boolean;
@@ -421,7 +433,7 @@ export async function resolveRefTransport(
   }
   let entries: readonly ConnectorCatalogEntry[] | null;
   try {
-    entries = await readCatalog();
+    entries = await readCatalog(owner);
   } catch (err) {
     log.warn("[connectors] catalog unreadable; minted fleet connectors cannot start", {
       server: ref.serverName,
@@ -474,7 +486,12 @@ export async function startConnectorSource(
   // the vendor's API response, so it carries no operator provenance.
   // One derivation feeds both the URL gate and the transport below — see
   // `resolveRefTransport` for why they must not be read separately.
-  const { transportConfig, fleetInternal } = await resolveRefTransport(ref, opts.readCatalog);
+  const owner = catalogOwnerOf(opts);
+  const { transportConfig, fleetInternal } = await resolveRefTransport(
+    ref,
+    opts.readCatalog,
+    owner,
+  );
   validateConnectorUrl(new URL(ref.url), {
     allowInsecure: opts?.allowInsecureRemotes,
     fleetInternal,
@@ -522,10 +539,10 @@ export async function startConnectorSource(
       url: new URL(ref.url),
       transportConfig,
       resolveTransportConfig: async () =>
-        (await resolveRefTransport(ref, opts.readCatalog)).transportConfig,
+        (await resolveRefTransport(ref, opts.readCatalog, owner)).transportConfig,
       allowInsecure: opts?.allowInsecureRemotes === true,
       authProvider,
-      ...(authProvider ? await catalogTransportOptions(ref) : {}),
+      ...(authProvider ? await catalogTransportOptions(ref, owner) : {}),
     },
     eventSink,
     composeConnectorMcpContext(opts?.connectorMcp, sourceName),

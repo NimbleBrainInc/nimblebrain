@@ -94,14 +94,17 @@ const zoom = listingEntry({
 
 function browse(
   files: Record<string, string>,
-  opts: { brokers?: { has(id: string): boolean }; configured?: boolean } = {},
+  opts: { brokers?: { has(id: string): boolean }; configured?: boolean; pinned?: boolean } = {},
 ) {
   return browseCatalog({
     listings: createCatalogListings({
       catalogs: Object.entries(files).map(([name, file]) => pathCatalog(name, file)),
       cacheDir: join(dir, "cache"),
     }),
-    connectorCatalog: new ConnectorCatalog(connectorDir),
+    // The pinned catalog's list is read through a function; a mounted directory is a path.
+    connectorCatalog: new ConnectorCatalog(
+      opts.pinned ? async () => ({ path: join(connectorDir, "list.json") }) : connectorDir,
+    ),
     brokers: opts.brokers ?? none,
     ...(opts.configured !== undefined
       ? { isOAuthClientConfigured: async () => opts.configured as boolean }
@@ -169,8 +172,11 @@ describe("browseCatalog", () => {
     expect(entries.find((e) => e.id === "ai.nimblebrain/web")?.status).toBe("ready");
   });
 
-  test("an entry install cannot serve yet is left out: no record, several servers, another type", async () => {
-    const noRecord = listingEntry({ name: "linear" });
+  test("an entry Browse cannot describe is left out: unlisted setup, several servers, another type", async () => {
+    const unlistedStatic = listingEntry({
+      name: "drive",
+      servers: { drive: { name: "com.google/drive", auth: "static" } },
+    });
     const twoServers = listingEntry({
       name: "suite",
       servers: {
@@ -180,9 +186,49 @@ describe("browseCatalog", () => {
     });
     const skill = { ...listingEntry({ name: "notes" }), type: "application/agent-skills+zip" };
     const { entries } = await browse({
-      nimblebrain: writeListing("nb", [noRecord, twoServers, skill]),
+      nimblebrain: writeListing("nb", [unlistedStatic, twoServers, skill]),
     });
     expect(entries.filter((e) => e.catalog === "nimblebrain")).toEqual([]);
+  });
+
+  test("with no directory mounted, the pinned list's records are never curated rows", async () => {
+    const { entries } = await browse(
+      { nimblebrain: writeListing("nb", [ahrefs, box]) },
+      {
+        pinned: true,
+      },
+    );
+    expect(entries.filter((e) => e.catalog === "curated")).toEqual([]);
+    // It still supplies the setup a static row shows.
+    const row = entries.find((e) => e.address === "box@nimblebrain");
+    expect(row?.install).toMatchObject({
+      auth: "static",
+      oauthClientSetup: STATIC_SETUP.oauthClientSetup,
+    });
+  });
+
+  test("a dcr entry the connector list does not hold is a row from its extension alone", async () => {
+    const { entries } = await browse({
+      nimblebrain: writeListing("nb", [listingEntry({ name: "linear" })]),
+    });
+    const row = entries.find((e) => e.address === "linear@nimblebrain");
+    expect(row?.id).toBe("com.linear/mcp");
+    expect(row?.status).toBe("ready");
+    expect(row?.install).toMatchObject({ kind: "remote-oauth", auth: "dcr" });
+  });
+
+  test("a bare connector's row is projected from its inline record", async () => {
+    const bare = {
+      identifier: "urn:air:vendor.test:crm:server",
+      displayName: "CRM",
+      type: "application/vnd.nimblebrain.server+json",
+      data: record("com.vendor/crm"),
+      digest: `sha256:${"0".repeat(64)}`,
+    };
+    const { entries } = await browse({ vendor: writeListing("vendor", [bare]) });
+    const row = entries.find((e) => e.address === "crm@vendor");
+    expect(row?.id).toBe("com.vendor/crm");
+    expect(row?.install).toMatchObject({ url: "https://com.vendor.crm.test/mcp", auth: "dcr" });
   });
 
   test("an entry whose server map holds a non-server value is dropped, and the rest list", async () => {

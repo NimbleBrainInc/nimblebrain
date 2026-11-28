@@ -82,8 +82,21 @@ function normalizeRemoteUrl(raw: string | undefined): string | null {
   return `${u.protocol}//${u.username}:${u.password}@${u.host}${path}${u.search}`;
 }
 
-/** Reads the operator catalog's entries. Throws when the catalog cannot be read. */
-export type CatalogEntriesReader = () => Promise<readonly ConnectorCatalogEntry[]>;
+/**
+ * Whose connection a catalog read is for: a workspace, or one person. A plugin
+ * an owner installed supplies that owner's server records and no one else's,
+ * so every read about an installed connection names its owner.
+ */
+export type CatalogOwner = { kind: "workspace"; wsId: string } | { kind: "person"; userId: string };
+
+/**
+ * Reads the operator catalog's entries, as `owner` sees them: its installed
+ * plugins' server records ahead of the connector list. With no owner, the
+ * connector list alone. Throws when the catalog cannot be read.
+ */
+export type CatalogEntriesReader = (
+  owner?: CatalogOwner,
+) => Promise<readonly ConnectorCatalogEntry[]>;
 
 /**
  * The reader for a caller that starts no minted fleet connector (a test of

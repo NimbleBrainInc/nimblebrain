@@ -93,29 +93,34 @@ afterEach(() => {
   _resetConnectorsConfigForTest();
 });
 
+/** A probe's catalog for every owner: the same directory, since these fixtures have no plugin. */
+function perOwner(directory: ConnectorCatalog): () => ConnectorCatalog {
+  return () => directory;
+}
+
 describe("ComposioConnectionProbe — config gating returns indeterminate (never flips)", () => {
   it("aborted signal → indeterminate", async () => {
     process.env.COMPOSIO_API_KEY = "k";
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), AbortSignal.abort())).toBe("indeterminate");
   });
 
   it("missing COMPOSIO_API_KEY → indeterminate", async () => {
     delete process.env.COMPOSIO_API_KEY;
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
   });
 
   it("ref without composio connectorId → indeterminate", async () => {
     process.env.COMPOSIO_API_KEY = "k";
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target(undefined), live)).toBe("indeterminate");
   });
 
   it("toolkit with no declared auth-config id → indeterminate", async () => {
     process.env.COMPOSIO_API_KEY = "k";
     setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
   });
 });
@@ -139,16 +144,26 @@ describe("ComposioConnectionProbe — auth-config id resolution", () => {
     // declared block, keyed by the toolkit the entry names.
     setConnectorsConfig({ providers: { composio: { authConfigs: { [TOOLKIT]: "ac_declared" } } } });
 
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), live)).toBe("live");
     expect(listArgs?.authConfigIds).toEqual(["ac_declared"]);
+  });
+
+  it("reads the catalog as the connection's workspace sees it", async () => {
+    const owners: unknown[] = [];
+    const p = new ComposioConnectionProbe((owner) => {
+      owners.push(owner);
+      return fakeDirectory();
+    });
+    await p.probe(target("com.x"), live);
+    expect(owners).toEqual([{ kind: "workspace", wsId: "ws_0002ee92e8791c13" }]);
   });
 
   it("toolkit the deployment declined to wire → indeterminate (never a flip)", async () => {
     // The catalog is a menu, so an unwired toolkit is a normal state and must
     // not be read as a lost credential.
     setConnectorsConfig({ providers: { composio: { authConfigs: {} } } });
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
     expect(listArgs).toBeUndefined();
   });
@@ -161,19 +176,19 @@ describe("ComposioConnectionProbe — verdict mapping", () => {
 
   it("an ACTIVE connected account → live", async () => {
     activeResult = { id: "ca_1", status: "ACTIVE" };
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), live)).toBe("live");
   });
 
   it("no ACTIVE account (null) → credential_lost", async () => {
     activeResult = null;
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), live)).toBe("credential_lost");
   });
 
   it("API error → indeterminate (never a flip)", async () => {
     activeThrows = true;
-    const p = new ComposioConnectionProbe(fakeDirectory());
+    const p = new ComposioConnectionProbe(perOwner(fakeDirectory()));
     expect(await p.probe(target("com.x"), live)).toBe("indeterminate");
   });
 });

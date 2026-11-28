@@ -21,6 +21,7 @@ export const PlatformToolCatalog = {
     create: { input: Skills.SkillsCreateInput },
     update: { input: Skills.SkillsUpdateInput },
     delete: { input: Skills.SkillsDeleteInput },
+    copy: { input: Skills.SkillsCopyInput },
     activate: { input: Skills.SkillsActivateInput },
     deactivate: { input: Skills.SkillsDeactivateInput },
     set_here: { input: Skills.SkillsSetHereInput },

@@ -18,16 +18,19 @@
  */
 
 import { log } from "../../observability/log.ts";
-import { bindCatalogEntry, type CatalogBinding } from "../catalog/binding.ts";
+import {
+  bindCatalogEntry,
+  type CatalogBinding,
+  type CatalogEntriesReader,
+  type CatalogOwner,
+} from "../catalog/binding.ts";
 import type { ConnectorCatalogEntry } from "../catalog/types.ts";
 import type { ConnectorRef } from "./types.ts";
 
-let readCatalogEntries: (() => Promise<readonly ConnectorCatalogEntry[]>) | null = null;
+let readCatalogEntries: CatalogEntriesReader | null = null;
 
-/** Wire the catalog the resolver binds against. Called once from `Runtime.start`. */
-export function setInBandAuthErrorsCatalog(
-  read: (() => Promise<readonly ConnectorCatalogEntry[]>) | null,
-): void {
+/** Wire the catalog the resolver binds against, as each connection's owner sees it. Called once from `Runtime.start`. */
+export function setInBandAuthErrorsCatalog(read: CatalogEntriesReader | null): void {
   readCatalogEntries = read;
 }
 
@@ -37,8 +40,11 @@ export function setInBandAuthErrorsCatalog(
  * read. A read failure is logged and leaves the connection on the transport's
  * 401 handling alone; it never fails the start.
  */
-export async function inBandAuthErrorsFor(ref: ConnectorRef): Promise<string[] | undefined> {
-  const binding = await bindingFor(ref);
+export async function inBandAuthErrorsFor(
+  ref: ConnectorRef,
+  owner?: CatalogOwner,
+): Promise<string[] | undefined> {
+  const binding = await bindingFor(ref, owner);
   return binding?.kind === "bound" ? binding.entry.inBandAuthErrors : undefined;
 }
 
@@ -61,8 +67,11 @@ export interface CatalogTransportOptions {
  * and neither does a connector added by URL alone: such a server may serve
  * every call without a token.
  */
-export async function catalogTransportOptions(ref: ConnectorRef): Promise<CatalogTransportOptions> {
-  const binding = await bindingFor(ref);
+export async function catalogTransportOptions(
+  ref: ConnectorRef,
+  owner?: CatalogOwner,
+): Promise<CatalogTransportOptions> {
+  const binding = await bindingFor(ref, owner);
   const entry = binding?.kind === "bound" ? binding.entry : undefined;
   const inBandAuthErrors = entry?.inBandAuthErrors;
   const requireCredential = requiresCredential(ref, entry);
@@ -84,11 +93,14 @@ function requiresCredential(ref: ConnectorRef, entry: ConnectorCatalogEntry | un
 }
 
 /** The ref's catalog binding, or undefined when no catalog is wired or it cannot be read. */
-async function bindingFor(ref: ConnectorRef): Promise<CatalogBinding | undefined> {
+async function bindingFor(
+  ref: ConnectorRef,
+  owner: CatalogOwner | undefined,
+): Promise<CatalogBinding | undefined> {
   if (!readCatalogEntries) return undefined;
   let entries: readonly ConnectorCatalogEntry[];
   try {
-    entries = await readCatalogEntries();
+    entries = await readCatalogEntries(owner);
   } catch (err) {
     log.warn(
       `[connectors] could not read the catalog for a connection's transport options: ${err instanceof Error ? err.message : String(err)}`,

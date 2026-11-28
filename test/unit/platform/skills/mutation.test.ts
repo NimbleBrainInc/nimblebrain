@@ -1509,7 +1509,15 @@ describe("durable status is set_status only", () => {
   // `deactivate` write no file at all (they refuse outside a chat, and their
   // scope is `skill-mute-scope.test.ts`), and `delete` removes the very file
   // the assertion reads.
-  const MODEL_FACING_WRITERS = ["create", "update", "delete", "activate", "deactivate", "restore"];
+  const MODEL_FACING_WRITERS = [
+    "create",
+    "update",
+    "delete",
+    "activate",
+    "deactivate",
+    "restore",
+    "copy",
+  ];
 
   test("no model-facing writer is covered by accident — the set is enumerated", async () => {
     // Through `surfaceTools`, not the wire: the MCP `annotations` schema drops
@@ -1584,6 +1592,17 @@ describe("durable status is set_status only", () => {
         call: { name: "restore", arguments: { id, version } },
         check: () => expect(readManifestField(id, "status")).toBe("active"),
       })),
+      {
+        // A copy is written on, whatever the original's status.
+        call: { name: "copy", arguments: { id, name: "invariant-copy" } },
+        check: () =>
+          expect(
+            readManifestField(
+              join(workDir, "users", DEV_USER.id, "skills", "invariant-copy.md"),
+              "status",
+            ),
+          ).toBe("active"),
+      },
     ];
     for (const attempt of attempts) {
       await client.callTool(attempt.call);

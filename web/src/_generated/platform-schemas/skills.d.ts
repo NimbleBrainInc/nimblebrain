@@ -81,6 +81,15 @@ export declare const SkillsDeleteInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
+/**
+ * `skills__copy`: make an editable personal (`user`-scope) skill from one the
+ * caller can read, a plugin's managed skill above all, which is read-only.
+ */
+export declare const SkillsCopyInput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TOptional<import("@sinclair/typebox").TString>;
+}>;
+export type SkillsCopyInput = Static<typeof SkillsCopyInput>;
 export declare const SkillsSetStatusInput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;
     status: import("@sinclair/typebox").TUnion<[import("@sinclair/typebox").TLiteral<"active">, import("@sinclair/typebox").TLiteral<"disabled">]>;
@@ -364,6 +373,14 @@ export declare const SkillsDeleteOutput: import("@sinclair/typebox").TObject<{
     scope: import("@sinclair/typebox").TString;
 }>;
 export type SkillsDeleteOutput = Static<typeof SkillsDeleteOutput>;
+/** `skills__copy`: the personal skill written, and the one it was copied from. */
+export declare const SkillsCopyOutput: import("@sinclair/typebox").TObject<{
+    id: import("@sinclair/typebox").TString;
+    name: import("@sinclair/typebox").TString;
+    scope: import("@sinclair/typebox").TString;
+    copiedFrom: import("@sinclair/typebox").TString;
+}>;
+export type SkillsCopyOutput = Static<typeof SkillsCopyOutput>;
 /** `skills__set_here`: whether the caller's own skill applies in this workspace. */
 export declare const SkillsSetHereOutput: import("@sinclair/typebox").TObject<{
     id: import("@sinclair/typebox").TString;

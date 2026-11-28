@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NoopEventSink } from "../../src/adapters/noop-events.ts";
+import { noCatalogListings } from "../../src/catalogs/reader.ts";
 import { ConnectorCatalog } from "../../src/connectors/catalog/catalog.ts";
 import type { CatalogListing } from "../../src/connectors/catalog/types.ts";
 import {
@@ -106,6 +107,8 @@ function buildHarness(): Harness {
     getWorkDir: () => workDir,
     getWorkspaceStore: () => workspaceStore,
     getConnectorCatalog: () => new ConnectorCatalog(join(workDir, "catalog.yaml")),
+    // No catalogs configured: an id only the connector list could hold.
+    getCatalogListings: () => noCatalogListings(),
     getLifecycle: () => lifecycle,
     getRegistryForWorkspace: () => workspaceRegistry,
     getAllowInsecureRemotes: () => false,

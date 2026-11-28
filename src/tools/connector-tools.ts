@@ -1,6 +1,8 @@
 import { mcpAuthCallbackUrl } from "../api/routes/mcp-auth.ts";
 import { brandName } from "../brand/index.ts";
 import { type BrowseResult, browseCatalog } from "../catalogs/browse.ts";
+import { SERVER_RECORD_TYPE } from "../catalogs/listing.ts";
+import { CONNECTOR_LIST_CATALOG_NAME } from "../config/catalogs.ts";
 import { brokeredCatalogConfig, isBrokeredAuthKind } from "../connectors/auth-kind.ts";
 import { bindCatalogEntry } from "../connectors/catalog/binding.ts";
 import { catalogEntryForRef } from "../connectors/catalog/catalog.ts";
@@ -55,12 +57,15 @@ import { log } from "../observability/log.ts";
 import { type ConnectorAdmission, filterAdmittedTools } from "../permissions/admin-tools.ts";
 import type { PermissionOwner, ToolPolicy } from "../permissions/permission-store.ts";
 import type { PluginAccount, PluginsListOutput } from "../platform/schemas/plugins.ts";
+import type { PluginOwner } from "../plugins/installed/record.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { canonicalJson } from "../util/jcs.ts";
 import { validateAdditionalAuthorizationParams } from "../util/oauth-params.ts";
 import { splitInnerToolName } from "../util/tool-name.ts";
 import { isHttpUrl } from "../util/url.ts";
 import { canWriteWorkspaceScoped } from "../workspace/authz.ts";
 import { WorkspaceContext } from "../workspace/context.ts";
+import { serializePerWorkspace } from "../workspace/serialize.ts";
 import type { Workspace } from "../workspace/types.ts";
 import { type CredentialRef, isCredentialRef } from "./credential-ref.ts";
 import type { CredentialStore } from "./credential-store.ts";
@@ -68,6 +73,13 @@ import { CREDENTIAL_PROVIDER } from "./credential-transport-credential.ts";
 import type { InProcessTool } from "./in-process-app.ts";
 import { hasMcpOAuthTokens, McpOAuthRecords } from "./mcp-oauth-records.ts";
 import { McpSource, REMOTE_TOOL_LIST_MAX_AGE_MS } from "./mcp-source.ts";
+import {
+  type ConnectorOps,
+  installPlugin,
+  type PluginInstallContext,
+  uninstallPlugin,
+  updatePlugin,
+} from "./plugin-install.ts";
 import { accountOf, projectPlugins } from "./plugin-listing.ts";
 import { createSsrfGuardedFetch } from "./ssrf-guarded-fetch.ts";
 import type { Tool, ToolSource } from "./types.ts";
@@ -282,6 +294,7 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             "list_tools",
             "list_tools_with_permissions",
             "install",
+            "update_plugin",
             "connect_api_key",
             "disconnect",
             "uninstall",
@@ -309,10 +322,15 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
           description:
             "Catalog entry id (required for set_oauth_client, remove_oauth_client, connect_api_key).",
         },
+        address: {
+          type: "string",
+          description:
+            "A catalog item's address, `name@catalog` (e.g. `notion@nimblebrain`), as Browse lists it. For `install` it may stand in for `entry`; for `uninstall` it removes that plugin and exactly what its install produced; for `update_plugin` (required) it replaces the plugin with what its catalog lists now. With `scope: \"identity\"` it is the caller's own plugin.",
+        },
         entry: {
           type: "object",
           description:
-            "CatalogListing to install (required for `install`). The same shape returned by list_directory. A `remote-oauth` entry is resolved by its exact `id` to this instance's catalog entry, which alone decides what is installed; an id the catalog does not list is refused (NOT_IN_CATALOG). On a local install only, `install: { kind: \"direct-url\", url, serverName? }` adds a server in development by its loopback URL (e.g. http://127.0.0.1:8000/mcp); the server's Server Card supplies its title, icon and placements.",
+            "CatalogListing to install (`install` takes it or `address`). The same shape returned by list_directory. A row with an `address` installs that catalog item: its artifact, verified against the listing's digest, alone decides what is installed, and the install is recorded as a plugin. An entry with only an `id` installs the one catalog item that lists that server; an id no catalog lists is refused (NOT_IN_CATALOG). On a local install only, `install: { kind: \"direct-url\", url, serverName? }` adds a server in development by its loopback URL (e.g. http://127.0.0.1:8000/mcp); the server's Server Card supplies its title, icon and placements.",
         },
         wsId: {
           type: "string",
@@ -408,7 +426,10 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             args.installWsId,
             args.scope,
             args.grantTargetWsId,
+            args.address,
           );
+        case "update_plugin":
+          return handlePluginAction(ctx, args, "update");
         case "connect_api_key":
           return handleConnectApiKey(ctx, args.wsId, args.identity, args.catalogId, args.fields);
         // One verb per thing, whoever owns the connector: `disconnect` signs it
@@ -418,6 +439,9 @@ export function createManageConnectorsTool(ctx: ManageConnectorsContext): InProc
             return handleSignOutIdentity(ctx, args.identity, args.serverName);
           return handleDisconnect(ctx, args.wsId, args.identity, args.serverName, args.scope);
         case "uninstall":
+          if (args.address || (await pluginsNaming(ctx, args)).length > 0) {
+            return handlePluginAction(ctx, args, "uninstall");
+          }
           if (args.scope === "identity")
             return handleUninstallIdentity(ctx, args.identity, args.serverName);
           return handleUninstall(ctx, args.wsId, args.identity, args.serverName, args.scope);
@@ -484,6 +508,7 @@ const NO_WORKSPACE_ACTIONS = new Set([
   // `install` names its target in the input (`wsId`) or installs a personal
   // connector (`scope: "identity"`); with neither it refuses in its handler.
   "install",
+  "update_plugin",
   "list_personal_connectors",
   "list_personal_catalog",
   "grant_connector",
@@ -531,6 +556,8 @@ interface DispatchArgs {
   /** For `set_record_sources`: the raw `sources` input (validated by the handler). */
   sources: unknown;
   entry: unknown;
+  /** A catalog item's `name@catalog`, for the plugin actions. */
+  address: string;
   installWsId: string | undefined;
   /** Explicit grant/revoke target workspace (input `wsId`, no header fallback). */
   grantTargetWsId: string | null;
@@ -568,6 +595,7 @@ function resolveDispatchArgs(
     tools: (input.tools as Record<string, unknown>) ?? {},
     sources: input.sources,
     entry: input.entry as unknown,
+    address: str(input.address).trim(),
     // Default the install target to the request's workspace — the same
     // `ctx.getWorkspaceId()` (the workspace in the request URL) every other
     // action on this tool uses. The web shell installs into the
@@ -614,7 +642,9 @@ async function handleListCatalog(
   ctx: ManageConnectorsContext,
   wsId: string | null,
 ): Promise<ToolResult> {
-  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
+  const catalog = await ctx.runtime
+    .getConnectorCatalog(wsId ? { kind: "workspace", wsId } : undefined)
+    .catalogEntries();
   const ws = wsId ? await ctx.runtime.getWorkspaceStore().get(wsId) : null;
   const allowList = ws?.connectorsAllowList;
   const filtered =
@@ -1300,7 +1330,7 @@ async function listInstalledEntries(
   // though they're called separately. Reaching for the lookup tables
   // (rather than the raw catalog list + manual map-build) keeps the
   // construction concern inside the facade.
-  const directory = ctx.runtime.getConnectorCatalog();
+  const directory = ctx.runtime.getConnectorCatalog({ kind: "workspace", wsId });
   const catalogByUrl = await directory.catalogByUrl();
   // O(1) catalog lookups for brokered connectors whose persisted `ref.url` is a
   // per-install session URL and therefore misses `catalogByUrl`. Built once per
@@ -1410,15 +1440,38 @@ async function handleInstall(
   wsIdArg: string | undefined,
   scope: string | undefined,
   grantWsId: string | null,
+  addressArg = "",
 ): Promise<ToolResult> {
+  const address = addressArg || entryAddress(rawEntry);
+  if (address && !address.endsWith(`@${CONNECTOR_LIST_CATALOG_NAME}`)) {
+    if (!identity) return errResult("Authentication required.");
+    return handleInstallPlugin(ctx, identity, address, wsIdArg, scope, grantWsId);
+  }
   const requested = parseCatalogListing(rawEntry);
   if (!requested) return errResult("entry with install action is required.");
   if (!identity) return errResult("Authentication required.");
 
+  // An entry with only an id installs the one catalog item that lists its server.
+  if (!address && requested.install.kind === "remote-oauth") {
+    const item = await catalogItemForServer(ctx, requested.id);
+    if (item && "isError" in item) return item;
+    if (item) return handleInstallPlugin(ctx, identity, item.address, wsIdArg, scope, grantWsId);
+  }
+
   const resolved = await resolveInstallEntry(ctx, requested);
   if ("isError" in resolved) return resolved;
-  const entry = resolved;
+  return installConnectorEntry(ctx, identity, resolved, wsIdArg, scope, grantWsId);
+}
 
+/** Install a connector from the connector list's own entry (a mounted directory's, or one by URL). */
+async function installConnectorEntry(
+  ctx: ManageConnectorsContext,
+  identity: UserIdentity,
+  entry: CatalogListing,
+  wsIdArg: string | undefined,
+  scope: string | undefined,
+  grantWsId: string | null,
+): Promise<ToolResult> {
   // Identity-target install: `scope: "identity"` installs a PERSONAL connector on
   // the caller's own identity — no workspace, credentials bound to the user. An
   // explicit `wsId` also grants it there (ADR-0069: installing from inside a
@@ -1458,6 +1511,190 @@ async function handleInstall(
     case "direct-url":
       return handleInstallDirectUrl(ctx, wsId, ws, entry.install);
   }
+}
+
+/** The `address` an install request's entry carries, when it carries one. */
+function entryAddress(raw: unknown): string {
+  const address = (raw as { address?: unknown } | null)?.address;
+  return typeof address === "string" ? address.trim() : "";
+}
+
+/**
+ * The catalog item an id-only install request means: the one listing entry
+ * that names server `id` (in its extension's `servers`, or a bare connector's
+ * inline record), or null to fall through to the connector list. A mounted
+ * directory's own record (`NB_CURATED_CATALOG_DIR`) installs from that
+ * directory, as its `curated` row does. Two catalogs naming the server is a
+ * refusal that names both addresses.
+ */
+async function catalogItemForServer(
+  ctx: ManageConnectorsContext,
+  id: string,
+): Promise<{ address: string } | ToolResult | null> {
+  const list = ctx.runtime.getConnectorCatalog();
+  if (list.isMounted() && (await list.listingById(id))) return null;
+  const addresses: string[] = [];
+  for (const snapshot of await ctx.runtime.getCatalogListings().snapshots()) {
+    for (const entry of snapshot.entries) {
+      const named = Object.values(entry.servers).some((s) => s.name === id);
+      const inline =
+        entry.type === SERVER_RECORD_TYPE &&
+        (entry.data as { name?: unknown } | undefined)?.name === id;
+      if (named || inline) addresses.push(entry.address);
+    }
+  }
+  if (addresses.length === 0) return null;
+  if (addresses.length > 1) {
+    return codedErr(
+      "AMBIGUOUS",
+      `"${id}" is listed by ${addresses.join(" and ")}; install one of them by its address.`,
+    );
+  }
+  return { address: addresses[0] as string };
+}
+
+/** Who a plugin action is for: the caller's own identity, or the workspace it names. */
+function pluginOwnerOf(
+  identity: UserIdentity,
+  wsIdArg: string | undefined,
+  scope: string | undefined,
+): PluginOwner | ToolResult {
+  if (scope === "identity") return { kind: "person", userId: identity.id };
+  const wsId = wsIdArg?.trim();
+  if (!wsId) {
+    return errResult(
+      'wsId is required: call through a workspace\'s URL, or pass scope: "identity" for your own plugins.',
+    );
+  }
+  return { kind: "workspace", wsId };
+}
+
+/** The connector install path, as plugin install uses it (`src/tools/plugin-install.ts`). */
+function pluginConnectorOps(ctx: ManageConnectorsContext, identity: UserIdentity): ConnectorOps {
+  const identityStore = new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() });
+  const workspace = async (wsId: string) => ctx.runtime.getWorkspaceStore().get(wsId);
+  return {
+    admit: async (owner) => {
+      if (owner.kind === "person") {
+        return owner.userId === identity.id ? null : errResult("Authentication required.");
+      }
+      const ws = await workspace(owner.wsId);
+      if (!ws) return errResult(`Workspace "${owner.wsId}" not found.`);
+      if (!isWorkspaceAdmin(ws, identity)) {
+        return {
+          content: textContent("Workspace admin role required to install or remove plugins."),
+          structuredContent: { error: "permission_denied" },
+          isError: true,
+        };
+      }
+      return null;
+    },
+    existing: async (owner, serverName) => {
+      if (owner.kind === "person") return identityStore.get(owner.userId, serverName);
+      const ws = await workspace(owner.wsId);
+      return ws?.connectors.find((r) => matchesServerName(r, serverName)) ?? null;
+    },
+    connect: async (owner, listing, opts) => {
+      if (owner.kind === "person") return handleInstallIdentity(ctx, identity, listing, opts);
+      const ws = await workspace(owner.wsId);
+      if (!ws) return errResult(`Workspace "${owner.wsId}" not found.`);
+      const admission = workspaceInstallAdmission(ws, identity, listing);
+      if (admission) return admission;
+      // The plugin's managed skills come from its artifact, never the resolver.
+      return handleInstallRemoteOAuth(ctx, owner.wsId, ws, listing, { ...opts, bindSkills: false });
+    },
+    disconnect: async (owner, serverName) =>
+      owner.kind === "person"
+        ? handleUninstallIdentity(ctx, identity, serverName)
+        : handleUninstall(ctx, owner.wsId, identity, serverName, undefined),
+  };
+}
+
+function pluginInstallContext(
+  ctx: ManageConnectorsContext,
+  identity: UserIdentity,
+): PluginInstallContext {
+  return { runtime: ctx.runtime, ops: pluginConnectorOps(ctx, identity) };
+}
+
+/**
+ * `install` of a catalog item by its address (ADR-0077): the plugin install
+ * path, recorded. A personal install with a `wsId` grants each connector it
+ * connected there, as a personal connector install does (ADR-0069).
+ */
+async function handleInstallPlugin(
+  ctx: ManageConnectorsContext,
+  identity: UserIdentity,
+  address: string,
+  wsIdArg: string | undefined,
+  scope: string | undefined,
+  grantWsId: string | null,
+): Promise<ToolResult> {
+  const owner = pluginOwnerOf(identity, wsIdArg, scope);
+  if ("isError" in owner) return owner;
+  const target =
+    owner.kind === "person" && grantWsId
+      ? await personalGrantTarget(ctx, identity.id, grantWsId)
+      : null;
+  if (target && "isError" in target) return target;
+  const result = await installPlugin(pluginInstallContext(ctx, identity), owner, address);
+  if (result.isError || !target) return result;
+  const serverNames = (result.structuredContent?.serverNames as string[] | undefined) ?? [];
+  for (const serverName of serverNames) {
+    await setPersonalGrant(ctx, identity.id, serverName, target.id, true);
+  }
+  return {
+    ...result,
+    structuredContent: { ...result.structuredContent, grantedWsId: target.id },
+  };
+}
+
+/** The records of the request's owner that name connector `serverName`. */
+async function pluginsNaming(ctx: ManageConnectorsContext, args: DispatchArgs): Promise<string[]> {
+  if (!args.identity || !args.serverName) return [];
+  const owner = pluginOwnerOf(args.identity, args.installWsId, args.scope);
+  if ("isError" in owner) return [];
+  // Read beside the connectors, as the uninstall that follows reads them.
+  const records =
+    owner.kind === "person"
+      ? await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).listPlugins(
+          owner.userId,
+        )
+      : ((await ctx.runtime.getWorkspaceStore().get(owner.wsId))?.plugins ?? []);
+  return records
+    .filter((r) => r.connectors.some((c) => slugifyServerName(c.name) === args.serverName))
+    .map((r) => r.address);
+}
+
+/**
+ * `uninstall` of a plugin (by `address`, or by a connector one plugin
+ * installed) and `update_plugin`. Removing a connector two plugins name is
+ * refused with both addresses, since it would remove the other's too.
+ */
+async function handlePluginAction(
+  ctx: ManageConnectorsContext,
+  args: DispatchArgs,
+  action: "uninstall" | "update",
+): Promise<ToolResult> {
+  if (!args.identity) return errResult("Authentication required.");
+  const owner = pluginOwnerOf(args.identity, args.installWsId, args.scope);
+  if ("isError" in owner) return owner;
+  let address = args.address;
+  if (!address) {
+    if (action === "update") return errResult("address is required for update_plugin.");
+    const naming = await pluginsNaming(ctx, args);
+    if (naming.length > 1) {
+      return codedErr(
+        "SHARED_CONNECTOR",
+        `"${args.serverName}" is used by ${naming.join(" and ")}; uninstall them by address.`,
+      );
+    }
+    address = naming[0] as string;
+  }
+  const pctx = pluginInstallContext(ctx, args.identity);
+  return action === "update"
+    ? updatePlugin(pctx, owner, address)
+    : uninstallPlugin(pctx, owner, address);
 }
 
 /**
@@ -1581,6 +1818,7 @@ async function handleInstallIdentity(
   ctx: ManageConnectorsContext,
   identity: UserIdentity,
   entry: CatalogListing,
+  opts: PluginConnectOptions = {},
 ): Promise<ToolResult> {
   const callerId = identity.id;
 
@@ -1647,10 +1885,11 @@ async function handleInstallIdentity(
   // guards the same way (`handleDuplicateInstall`, before `resolveInstallWiring`).
   // `add` upserts, so the record survives either way; this just defers the
   // session-create and keeps the contract idempotent (brokered and DCR alike).
-  const existing = await new IdentityConnectorStore({
-    workDir: ctx.runtime.getWorkDir(),
-  }).get(callerId, serverName);
+  const store = new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() });
+  const existing = await store.get(callerId, serverName);
   if (existing) {
+    const moved = await reconfigureIdentityConnection(ctx, callerId, entry, action, existing, opts);
+    if (moved) return moved;
     return {
       content: textContent(
         `"${entry.name}" is already a personal connector. Connect it to authenticate.`,
@@ -1659,10 +1898,6 @@ async function handleInstallIdentity(
       isError: false,
     };
   }
-
-  // Host UI placement is SERVER-authored: resolve from the operator-trusted
-  // catalog by id, never the caller's entry (a forged entry can't inject chrome).
-  const trustedUi = (await ctx.runtime.getConnectorCatalog().catalogById(entry.id))?.ui;
 
   // Resolve install wiring, owner-generic. DCR carries none (no session, no
   // client secret). A brokered connector creates the upstream session bound to
@@ -1683,29 +1918,16 @@ async function handleInstallIdentity(
     brokeredWiring = wiring;
   }
 
-  // Strip the `oauthScope: "workspace"` literal `buildRemoteConnectorRef` stamps for
-  // the workspace path — an identity ref is user-owned structurally, by its
-  // location in `connectors.json`, and carries no scope field (see
-  // `IdentityConnectorStore`). The brokered marker, when present, rides the ref
-  // so the Connect route and list handler key on it.
-  // A static entry signs in with the instance OAuth client, bound to the
-  // catalog's URL for it. The gate above guarantees one is declared.
-  let oauthClient: OAuthClientConfig | undefined;
-  if (action.auth === "static") {
-    const instanceClient = instanceOAuthClientFor(entry, action);
-    if (!instanceClient) return errResult(`"${entry.name}" has no instance OAuth client.`);
-    if ("__err" in instanceClient) return errResult(instanceClient.__err);
-    oauthClient = instanceClient;
-  }
-  const ref = buildRemoteConnectorRef(action, serverName, trustedUi, brokeredWiring, oauthClient);
-  delete (ref as { oauthScope?: "workspace" }).oauthScope;
+  const ref = await identityConnectorRef(ctx, callerId, entry, action, brokeredWiring);
+  if ("__err" in ref) return errResult(ref.__err);
+  Object.assign(ref, provenance(opts));
 
   // The connector-skill overlay (`syncBoundSkills`) is workspace-keyed; the
   // identity-plane overlay (materializing into the user's skill store) is a
   // follow-up. It's best-effort / non-fatal, so skipping it doesn't affect the
   // connector's function — do NOT fake a wsId to force it.
 
-  await new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).add(callerId, ref);
+  await store.add(callerId, ref);
 
   // No eager-start: a connector has no live credentials until the user completes
   // the interactive Connect flow — DCR and instance-client static via
@@ -1721,6 +1943,81 @@ async function handleInstallIdentity(
     structuredContent: { ok: true, alreadyInstalled: false, serverName, scope: "identity" },
     isError: false,
   };
+}
+
+/**
+ * The ref a personal install stores. Host UI placement is SERVER-authored:
+ * resolved from the operator-trusted catalog by id, never the caller's entry
+ * (a forged entry can't inject chrome). The `oauthScope: "workspace"` literal
+ * `buildRemoteConnectorRef` stamps for the workspace path is stripped: an
+ * identity ref is user-owned structurally, by its location in
+ * `connectors.json` (see `IdentityConnectorStore`). The brokered marker, when
+ * present, rides the ref so the Connect route and list handler key on it. A
+ * static entry signs in with the instance OAuth client, bound to the
+ * catalog's URL for it; the install gate guarantees one is declared.
+ */
+async function identityConnectorRef(
+  ctx: ManageConnectorsContext,
+  callerId: string,
+  entry: CatalogListing,
+  action: RemoteOAuthInstall,
+  brokeredWiring: BrokeredWiring | undefined,
+): Promise<ConnectorRef | { __err: string }> {
+  let oauthClient: OAuthClientConfig | undefined;
+  if (action.auth === "static") {
+    const instanceClient = instanceOAuthClientFor(entry, action);
+    if (!instanceClient) return { __err: `"${entry.name}" has no instance OAuth client.` };
+    if ("__err" in instanceClient) return instanceClient;
+    oauthClient = instanceClient;
+  }
+  const trustedUi = (
+    await ctx.runtime
+      .getConnectorCatalog({ kind: "person", userId: callerId })
+      .catalogById(entry.id)
+  )?.ui;
+  const ref = buildRemoteConnectorRef(
+    action,
+    slugifyServerName(entry.id),
+    trustedUi,
+    brokeredWiring,
+    oauthClient,
+  );
+  delete (ref as { oauthScope?: "workspace" }).oauthScope;
+  return ref;
+}
+
+/**
+ * Move a personal connection to `entry`'s connection settings when they
+ * differ (a plugin update whose server record changed): the row is rewritten
+ * in place and the connection signed out, so credentials minted for the old
+ * settings never reach the new ones. Null when not asked to, for a brokered
+ * connection, or when nothing differs.
+ */
+async function reconfigureIdentityConnection(
+  ctx: ManageConnectorsContext,
+  callerId: string,
+  entry: CatalogListing,
+  action: RemoteOAuthInstall,
+  existing: ConnectorRef,
+  opts: PluginConnectOptions,
+): Promise<ToolResult | null> {
+  // A brokered connection's endpoint is its broker's session, not the record's.
+  if (!opts.reconfigure || isBrokeredAuthKind(action.auth)) return null;
+  const candidate = await identityConnectorRef(ctx, callerId, entry, action, undefined);
+  if ("__err" in candidate) return errResult(candidate.__err);
+  const previousAction = remoteInstallOf(opts.previous);
+  const previous =
+    opts.previous && previousAction
+      ? await identityConnectorRef(ctx, callerId, opts.previous, previousAction, undefined)
+      : null;
+  const next = owedMove(existing, candidate, previous && !("__err" in previous) ? previous : null);
+  if (!next) return null;
+  // Signed out before the new settings are stored, so an interruption leaves
+  // old or new settings with no credential, never new with old.
+  const workDir = ctx.runtime.getWorkDir();
+  await ctx.runtime.getLifecycle().signOutIdentityConnector(callerId, next.serverName, { workDir });
+  await new IdentityConnectorStore({ workDir }).add(callerId, next);
+  return reconnectedResult(entry.name, next.serverName, { scope: "identity" });
 }
 
 /**
@@ -1761,7 +2058,7 @@ async function handleConnectApiKey(
   const ws = await ctx.runtime.getWorkspaceStore().get(wsId);
   if (!ws) return errResult(`Workspace "${wsId}" not found.`);
 
-  const resolved = await resolveApiKeyConnector(ctx, catalogId);
+  const resolved = await resolveApiKeyConnector(ctx, catalogId, wsId);
   if ("error" in resolved) return errResult(resolved.error);
   const { entry, config, provider, connectApiKey } = resolved;
 
@@ -1847,6 +2144,7 @@ function stringFields(raw: Record<string, unknown>): Record<string, string> {
 async function resolveApiKeyConnector(
   ctx: ManageConnectorsContext,
   catalogId: string,
+  wsId: string,
 ): Promise<
   | {
       entry: ConnectorCatalogEntry;
@@ -1856,7 +2154,9 @@ async function resolveApiKeyConnector(
     }
   | { error: string }
 > {
-  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
+  const entry = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(catalogId);
   if (!entry) return { error: `Connector "${catalogId}" not in catalog.` };
   const config = brokeredCatalogConfig(entry);
   if (!config) return { error: `Connector "${catalogId}" is not brokered (auth=${entry.auth}).` };
@@ -2007,6 +2307,7 @@ async function handleInstallRemoteOAuth(
   wsId: string,
   ws: Workspace,
   entry: CatalogListing,
+  opts: { bindSkills?: boolean } & PluginConnectOptions = {},
 ): Promise<ToolResult> {
   if (entry.install.kind !== "remote-oauth") {
     return errResult("invariant violated: handleInstallRemoteOAuth requires remote-oauth entry");
@@ -2023,7 +2324,9 @@ async function handleInstallRemoteOAuth(
   // Host UI placement (sidebar app, etc.) is SERVER-authored metadata, read
   // from the operator-trusted catalog entry for this id. Placements are
   // re-validated at registration (`sanitizePlacements`).
-  const trusted = await ctx.runtime.getConnectorCatalog().catalogById(entry.id);
+  const trusted = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(entry.id);
   const trustedUi = trusted?.ui;
 
   // serverName is the slugified canonical reverse-DNS form — opaque,
@@ -2047,6 +2350,16 @@ async function handleInstallRemoteOAuth(
 
   // Dedup (which self-heals an orphaned workspace.json entry) short-circuits
   // before any expensive wiring so a re-click doesn't burn a brokered session.
+  const moved = await reconfigureWorkspaceConnection(
+    ctx,
+    wsId,
+    ws,
+    entry,
+    action,
+    serverName,
+    opts,
+  );
+  if (moved) return moved;
   const dupResult = await handleDuplicateInstall(ctx, wsId, ws, entry, action, serverName, trusted);
   if (dupResult) return dupResult;
 
@@ -2060,6 +2373,7 @@ async function handleInstallRemoteOAuth(
     wiring.brokeredWiring,
     wiring.staticOAuthClient,
   );
+  Object.assign(ref, provenance(opts));
   // Bind the curated skills the catalog's plugin for this server carries, if
   // any. The plugin names its server by registry name, which is the catalog
   // entry's id (`com.dropbox/mcp`), not the slugified serverName. Best-effort +
@@ -2067,14 +2381,16 @@ async function handleInstallRemoteOAuth(
   // so uninstall cleans it up and the dedupe path knows the connector has an
   // overlay. The skills materialize into the workspace's `connector-skills/`
   // store, NEVER the system prompt.
-  const skillsLock = await lifecycle.syncBoundSkills(
-    entry.id,
-    serverName,
-    wsId,
-    ctx.runtime.getWorkDir(),
-  );
-  if (skillsLock.length > 0) ref.skillsLock = skillsLock;
-  await ctx.runtime.getWorkspaceStore().update(wsId, { connectors: [...ws.connectors, ref] });
+  if (opts.bindSkills !== false) {
+    const skillsLock = await lifecycle.syncBoundSkills(
+      entry.id,
+      serverName,
+      wsId,
+      ctx.runtime.getWorkDir(),
+    );
+    if (skillsLock.length > 0) ref.skillsLock = skillsLock;
+  }
+  await putWorkspaceConnector(ctx, wsId, ref);
   const wsRegistry = ctx.runtime.getRegistryForWorkspace(wsId);
   await lifecycle.seedInstance(serverName, action.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
@@ -2195,7 +2511,7 @@ async function handleInstallDirectUrl(
     ...(display ? { display } : {}),
   };
   const lifecycle = ctx.runtime.getLifecycle();
-  await ctx.runtime.getWorkspaceStore().update(wsId, { connectors: [...ws.connectors, ref] });
+  await putWorkspaceConnector(ctx, wsId, ref);
   await lifecycle.seedInstance(serverName, install.url, ref, undefined, wsId);
   lifecycle.notifyInstalled(serverName, wsId);
 
@@ -2275,7 +2591,9 @@ async function refuseDirectServerName(
       `This workspace already has a connector named "${serverName}". Remove it first, or pass another serverName.`,
     );
   }
-  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
+  const catalog = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogEntries();
   if (catalog.some((e) => slugifyServerName(e.id) === serverName)) {
     return codedErr(
       "NAME_IS_CATALOG_ENTRY",
@@ -2305,7 +2623,7 @@ async function startDirectSource(
         allowInsecureRemotes: allowInsecure,
         workspaceContext: new WorkspaceContext({ wsId, workDir: ctx.runtime.getWorkDir() }),
         connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
-        readCatalog: () => ctx.runtime.getConnectorCatalog().catalogEntries(),
+        readCatalog: (owner) => ctx.runtime.getConnectorCatalog(owner).catalogEntries(),
       },
     );
     return undefined;
@@ -2743,6 +3061,177 @@ export function installedProviderAuth(providerAuth: {
   };
 }
 
+/** How a plugin install connects one server (`ConnectorOps.connect`). */
+interface PluginConnectOptions {
+  /** The plugin's address, stamped on a connection this install creates (`ConnectorRef.installedBy`). */
+  installedBy?: string;
+  /**
+   * The plugin supplies this server's record and is being updated: an
+   * existing connection is moved to the record's connection settings.
+   */
+  reconfigure?: boolean;
+  /**
+   * The server's listing as the plugin's current record projects it. When its
+   * settings differ from the update's, the move is owed even where the stored
+   * ref already matches (an update that stopped before its record), so a retry
+   * repeats the sign-out and reports it.
+   */
+  previous?: CatalogListing;
+}
+
+/** The `installedBy` mark a plugin install puts on a connection it creates. */
+function provenance(opts: PluginConnectOptions): Pick<ConnectorRef, "installedBy"> {
+  return opts.installedBy ? { installedBy: opts.installedBy } : {};
+}
+
+/** The ref fields that say how a connection is reached and signed in to. */
+const CONNECTION_FIELDS = [
+  "url",
+  "transport",
+  "scopes",
+  "additionalAuthorizationParams",
+  "oauthClient",
+  "headlessAuthProbe",
+] as const satisfies ReadonlyArray<keyof ConnectorRef>;
+
+/**
+ * `existing` with `candidate`'s connection settings, or null when they are the
+ * same. Everything else on the ref (its record sources, skills lock,
+ * provenance) stays. Any change here needs a new sign-in: credentials were
+ * minted for the endpoint, client and scopes they were granted against.
+ */
+function reconnectedRef(existing: ConnectorRef, candidate: ConnectorRef): ConnectorRef | null {
+  const pick = (ref: ConnectorRef) =>
+    Object.fromEntries(CONNECTION_FIELDS.map((k) => [k, ref[k] ?? null]));
+  if (canonicalJson(pick(existing)) === canonicalJson(pick(candidate))) return null;
+  const next: ConnectorRef = { ...existing };
+  for (const key of CONNECTION_FIELDS) {
+    if (candidate[key] === undefined) delete next[key];
+    else Object.assign(next, { [key]: candidate[key] });
+  }
+  return next;
+}
+
+/**
+ * The ref to move `existing` to, or null when no move is owed: the stored
+ * settings differ from `candidate`'s, or the plugin's previous record
+ * (`previous`, its projected ref) does, which a stopped update leaves behind
+ * once it has stored the new settings.
+ */
+function owedMove(
+  existing: ConnectorRef,
+  candidate: ConnectorRef,
+  previous: ConnectorRef | null,
+): ConnectorRef | null {
+  const next = reconnectedRef(existing, candidate);
+  if (next) return next;
+  return previous && reconnectedRef(previous, candidate) ? { ...existing } : null;
+}
+
+/** `listing`'s remote install, when it validates as one. */
+function remoteInstallOf(listing: CatalogListing | undefined): RemoteOAuthInstall | null {
+  if (listing?.install.kind !== "remote-oauth") return null;
+  const validated = validateRemoteOAuthInstall(listing, listing.install);
+  return "error" in validated ? null : validated.action;
+}
+
+function reconnectedResult(
+  name: string,
+  serverName: string,
+  owner: Record<string, unknown>,
+  warning?: string,
+): ToolResult {
+  return {
+    content: textContent(
+      `"${name}" now connects with its updated settings. Connect it again to sign in.${warning ? ` ${warning}` : ""}`,
+    ),
+    structuredContent: {
+      ok: true,
+      alreadyInstalled: true,
+      reconnected: true,
+      serverName,
+      ...owner,
+      ...(warning ? { warning } : {}),
+    },
+    isError: false,
+  };
+}
+
+/**
+ * Move an installed workspace connection to `entry`'s connection settings
+ * when they differ (a plugin update whose server record changed): the row is
+ * rewritten in place and the connection drops its OAuth records and asks for
+ * sign-in, as replacing its OAuth client does. Null when not asked to, when
+ * nothing differs, or when the connection is not one this applies to: none
+ * installed, or brokered (the broker owns its session's endpoint).
+ */
+async function reconfigureWorkspaceConnection(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  ws: Workspace,
+  entry: CatalogListing,
+  action: RemoteOAuthInstall,
+  serverName: string,
+  opts: PluginConnectOptions,
+): Promise<ToolResult | null> {
+  if (!opts.reconfigure) return null;
+  const existing = ws.connectors.find((b) => matchesServerName(b, serverName));
+  if (!existing || brokeredRef(existing) || isBrokeredAuthKind(action.auth)) return null;
+  const wiring = await resolveInstallWiring(ctx, wsId, ws, entry, action);
+  if ("error" in wiring) return errResult(wiring.error);
+  const settingsOf = (a: RemoteOAuthInstall) =>
+    buildRemoteConnectorRef(a, serverName, undefined, undefined, wiring.staticOAuthClient);
+  const previousAction = remoteInstallOf(opts.previous);
+  const next = owedMove(
+    existing,
+    settingsOf(action),
+    previousAction ? settingsOf(previousAction) : null,
+  );
+  if (!next) return null;
+  // Credentials go before the new settings are stored, so an interruption
+  // leaves old or new settings with no credential, never new with old.
+  const lifecycle = ctx.runtime.getLifecycle();
+  await lifecycle.replaceConnectionRef(serverName, wsId, next);
+  await putWorkspaceConnector(ctx, wsId, next);
+  if (!lifecycle.getInstance(serverName, wsId)) {
+    await lifecycle.seedInstance(serverName, action.url, next, undefined, wsId);
+  }
+  const warning =
+    action.auth === "provider"
+      ? await eagerStartRemoteSource(
+          ctx,
+          next,
+          ctx.runtime.getRegistryForWorkspace(wsId),
+          wsId,
+          entry,
+          action,
+        )
+      : undefined;
+  return reconnectedResult(entry.name, serverName, { scope: "workspace", wsId }, warning);
+}
+
+/**
+ * Write one connector row to the workspace record: replace the row of the same
+ * server in place, else append it. Read inside the workspace's chain, so a
+ * concurrent install, uninstall or plugin-record write is never lost.
+ */
+async function putWorkspaceConnector(
+  ctx: ManageConnectorsContext,
+  wsId: string,
+  ref: ConnectorRef,
+): Promise<void> {
+  const store = ctx.runtime.getWorkspaceStore();
+  await serializePerWorkspace(wsId, async () => {
+    const ws = await store.get(wsId);
+    if (!ws) throw new Error(`Workspace "${wsId}" not found.`);
+    const i = ws.connectors.findIndex((r) => matchesServerName(r, ref.serverName));
+    const connectors = [...ws.connectors];
+    if (i >= 0) connectors[i] = ref;
+    else connectors.push(ref);
+    await store.update(wsId, { connectors });
+  });
+}
+
 /**
  * Build the ConnectorRef from the resolved wiring (a brokered session URL +
  * transport, or static client credentials). Constructed on the fresh-install
@@ -2928,7 +3417,7 @@ async function eagerStartRemoteSource(
       allowInsecureRemotes: ctx.runtime.getAllowInsecureRemotes(),
       workspaceContext: new WorkspaceContext({ wsId, workDir: ctx.runtime.getWorkDir() }),
       connectorMcp: ctx.runtime.getConnectorMcpDeps(wsId),
-      readCatalog: () => ctx.runtime.getConnectorCatalog().catalogEntries(),
+      readCatalog: (owner) => ctx.runtime.getConnectorCatalog(owner).catalogEntries(),
     });
     return undefined;
   } catch (err) {
@@ -3160,7 +3649,9 @@ async function workspaceOAuthClientOf(
 ): Promise<{ catalogId: string; clientSecretKey: string; inUse: boolean } | undefined> {
   const secret = oauthClientSecretRef(ref?.oauthClient);
   if (!ref?.url || !isCredentialRef(secret)) return undefined;
-  const entry = (await ctx.runtime.getConnectorCatalog().catalogByUrl()).get(ref.url);
+  const entry = (
+    await ctx.runtime.getConnectorCatalog({ kind: "workspace", wsId: ws.id }).catalogByUrl()
+  ).get(ref.url);
   if (
     entry?.auth !== "static" ||
     entry.oauthClientSetup?.clientSecretKey !== secret.key ||
@@ -3730,14 +4221,18 @@ async function handleSetRecordSources(
   );
   if (refused) return refused;
   const store = ctx.runtime.getWorkspaceStore();
-  const ws = await store.get(wsId);
-  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
-  const connectors = ws.connectors.map((ref) => {
-    if (serverNameFromRef(ref) !== serverName) return ref;
-    const { recordSources: _prior, ...rest } = ref;
-    return sources === null ? rest : { ...rest, recordSources: sources };
+  const ws = await serializePerWorkspace(wsId, async () => {
+    const current = await store.get(wsId);
+    if (!current) return null;
+    const connectors = current.connectors.map((ref) => {
+      if (serverNameFromRef(ref) !== serverName) return ref;
+      const { recordSources: _prior, ...rest } = ref;
+      return sources === null ? rest : { ...rest, recordSources: sources };
+    });
+    await store.update(wsId, { connectors });
+    return current;
   });
-  await store.update(wsId, { connectors });
+  if (!ws) return errResult(`Workspace "${wsId}" not found.`);
   const catalogGrants = await ctx.runtime.catalogGrantsRecordArguments(wsId, serverName);
   const installed = new Set(ws.connectors.map((ref) => serverNameFromRef(ref)));
   const unknownSources = (sources ?? []).filter((name) => !installed.has(name));
@@ -3899,7 +4394,7 @@ export async function listUngrantedPersonalPlugins(
   const [grants, refs, catalog] = await Promise.all([
     ctx.runtime.getPermissionStore().listConnectorGrants(callerId),
     new IdentityConnectorStore({ workDir: ctx.runtime.getWorkDir() }).list(callerId),
-    ctx.runtime.getConnectorCatalog().catalogEntries(),
+    ctx.runtime.getConnectorCatalog({ kind: "person", userId: callerId }).catalogEntries(),
   ]);
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
   const owner = { type: "user", userId: callerId } as const;
@@ -3966,7 +4461,9 @@ async function listPersonalConnectorEntries(
   // Enrich display metadata from the operator-trusted catalog (keyed by the same
   // slug the ref stamps) — the URL ref carries no human name/description. Falls
   // back to the slug when the catalog no longer lists the connector.
-  const catalog = await ctx.runtime.getConnectorCatalog().catalogEntries();
+  const catalog = await ctx.runtime
+    .getConnectorCatalog({ kind: "person", userId: callerId })
+    .catalogEntries();
   const byServerName = new Map(catalog.map((e) => [slugifyServerName(e.id), e]));
 
   const owner = { type: "user", userId: callerId } as const;
@@ -4298,7 +4795,9 @@ async function handleSetOAuthClient(
     };
   }
 
-  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
+  const entry = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
   if (entry.auth !== "static") {
     return errResult(`"${entry.name}" is a DCR connector — OAuth client setup not required.`);
@@ -4324,30 +4823,35 @@ async function handleSetOAuthClient(
     })) !== null;
   await credStore.put({ kind: "workspace", wsId }, clientSecretKey, clientSecret.trim());
 
-  // Stamp the public clientId + audit trail into workspace.json.
-  const apps: NonNullable<Workspace["oauthClients"]> = { ...(ws.oauthClients ?? {}) };
-  apps[catalogId] = {
-    clientId: clientId.trim(),
-    configuredAt: new Date().toISOString(),
-    configuredBy: identity.id,
-  };
-  const rotated = rotateInstalledOAuthClients(ws.connectors, entry.url, clientId.trim());
-  await persistWorkspaceOAuthClient(
-    ctx,
-    wsId,
-    {
-      oauthClients: apps,
-      ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
-    },
-    credStore,
-    clientSecretKey,
-    hadPriorSecret,
-  );
+  // Stamp the public clientId + audit trail into workspace.json, from the
+  // record as it stands inside the workspace's chain.
+  const { apps, rotated } = await serializePerWorkspace(wsId, async () => {
+    const current = (await ctx.runtime.getWorkspaceStore().get(wsId)) ?? ws;
+    const apps: NonNullable<Workspace["oauthClients"]> = { ...(current.oauthClients ?? {}) };
+    apps[catalogId] = {
+      clientId: clientId.trim(),
+      configuredAt: new Date().toISOString(),
+      configuredBy: identity.id,
+    };
+    const rotated = rotateInstalledOAuthClients(current.connectors, entry.url, clientId.trim());
+    await persistWorkspaceOAuthClient(
+      ctx,
+      wsId,
+      {
+        oauthClients: apps,
+        ...(rotated.refs.length > 0 ? { connectors: rotated.connectors } : {}),
+      },
+      credStore,
+      clientSecretKey,
+      hadPriorSecret,
+    );
+    return { apps, rotated };
+  });
   // The install copied the client id onto its ref, and every connection reads
   // its client from there. A new client invalidates whatever the old one signed
   // in, so each rotated connection drops its OAuth records and asks for sign-in.
   for (const ref of rotated.refs) {
-    await ctx.runtime.getLifecycle().replaceOAuthClient(ref.serverName, wsId, ref);
+    await ctx.runtime.getLifecycle().replaceConnectionRef(ref.serverName, wsId, ref);
   }
 
   return {
@@ -4450,7 +4954,9 @@ async function handleRemoveOAuthClient(
     };
   }
 
-  const entry = await ctx.runtime.getConnectorCatalog().catalogById(catalogId);
+  const entry = await ctx.runtime
+    .getConnectorCatalog({ kind: "workspace", wsId })
+    .catalogById(catalogId);
   if (!entry) return errResult(`Catalog entry "${catalogId}" not found.`);
 
   // Guard: refuse if the connector is currently installed. Removing

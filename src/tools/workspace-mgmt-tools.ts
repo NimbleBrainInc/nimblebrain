@@ -344,7 +344,7 @@ async function handleCreate(
       workspace: {
         id: workspace.id,
         name: workspace.name,
-        connectors: workspace.connectors.map(await connectorDescriber(ctx)),
+        connectors: workspace.connectors.map(await connectorDescriber(ctx, workspace.id)),
         memberCount: workspace.members.length,
         createdAt: workspace.createdAt,
       },
@@ -412,7 +412,7 @@ async function handleUpdate(
       workspace: {
         id: updated.id,
         name: updated.name,
-        connectors: updated.connectors.map(await connectorDescriber(ctx)),
+        connectors: updated.connectors.map(await connectorDescriber(ctx, updated.id)),
         memberCount: updated.members.length,
         updatedAt: updated.updatedAt,
       },
@@ -512,8 +512,9 @@ interface ConnectorSummary {
  */
 async function connectorDescriber(
   ctx: ManageWorkspacesContext,
+  wsId: string,
 ): Promise<(ref: ConnectorRef) => ConnectorSummary> {
-  const catalog = ctx.runtime.getConnectorCatalog();
+  const catalog = ctx.runtime.getConnectorCatalog({ kind: "workspace", wsId });
   const [byUrl, byId] = await Promise.all([catalog.catalogByUrl(), catalog.catalogByIdMap()]);
   return (ref) => {
     const serverName = serverNameFromRef(ref) ?? ref.url;
@@ -530,8 +531,9 @@ async function handleList(ctx: ManageWorkspacesContext): Promise<ToolResult> {
   try {
     const workspaces = await ctx.workspaceStore.list();
     const identity = ctx.getIdentity();
-    const describe = await connectorDescriber(ctx);
-    const result = workspaces.map((ws) => {
+    const describers = await Promise.all(workspaces.map((ws) => connectorDescriber(ctx, ws.id)));
+    const result = workspaces.map((ws, i) => {
+      const describe = describers[i] as (ref: ConnectorRef) => ConnectorSummary;
       const userRole = identity
         ? ws.members.find((m) => m.userId === identity.id)?.role
         : undefined;

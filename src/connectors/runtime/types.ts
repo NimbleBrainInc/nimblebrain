@@ -226,6 +226,14 @@ export type ConnectorRef = {
    * live connection reports wins over this one.
    */
   display?: ConnectorDisplay;
+  /**
+   * The plugin (`name@catalog`) whose install created this connection
+   * (ADR-0077). Absent on a connection its owner added. A plugin install
+   * resumes a connection only when a plugin created it, and never takes over
+   * one without this mark, whatever its URL; a plugin uninstall never removes
+   * one without it.
+   */
+  installedBy?: string;
 };
 
 /** A connector's self-description, stored for display. See `ConnectorRef.display`. */

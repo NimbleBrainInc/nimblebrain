@@ -282,6 +282,26 @@ const IdOnlyInput = Type.Object(
 export const SkillsDeleteInput = IdOnlyInput;
 export type SkillsDeleteInput = Static<typeof SkillsDeleteInput>;
 
+/**
+ * `skills__copy`: make an editable personal (`user`-scope) skill from one the
+ * caller can read, a plugin's managed skill above all, which is read-only.
+ */
+export const SkillsCopyInput = Type.Object(
+  {
+    id: Type.String({ description: "Filesystem path of the skill to copy, from `skills__list`." }),
+    name: Type.Optional(
+      Type.String({
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$",
+        maxLength: 64,
+        description:
+          "Name of the copy (lowercase letters, digits, single hyphens). Defaults to the original's file name.",
+      }),
+    ),
+  },
+  { required: ["id"] },
+);
+export type SkillsCopyInput = Static<typeof SkillsCopyInput>;
+
 export const SkillsSetStatusInput = Type.Object(
   {
     id: Type.String({ description: "Filesystem path returned by `skills__list`." }),
@@ -550,6 +570,15 @@ export const SkillsDeleteOutput = Type.Object({
   scope: Type.String(),
 });
 export type SkillsDeleteOutput = Static<typeof SkillsDeleteOutput>;
+
+/** `skills__copy`: the personal skill written, and the one it was copied from. */
+export const SkillsCopyOutput = Type.Object({
+  id: Type.String(),
+  name: Type.String(),
+  scope: Type.String(),
+  copiedFrom: Type.String(),
+});
+export type SkillsCopyOutput = Static<typeof SkillsCopyOutput>;
 
 /** `skills__set_here`: whether the caller's own skill applies in this workspace. */
 export const SkillsSetHereOutput = Type.Object({
