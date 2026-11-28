@@ -1,6 +1,6 @@
 # 0068. A plugin is the unit of install, a catalog vouches for it, and the runtime reconciles what is installed
 
-- Status: Accepted
+- Status: Accepted; amended by [ADR-0077](./0077-everything-installed-from-a-catalog-is-a-plugin-and-its-record-says-what-it-owns.md) (the AI Catalog is the install listing; the installed record names the plugin; pins move to installed artifacts)
 - Date: 2026-11-18
 - Serves: manage skills; orchestrate remote MCP; secure RBAC
 

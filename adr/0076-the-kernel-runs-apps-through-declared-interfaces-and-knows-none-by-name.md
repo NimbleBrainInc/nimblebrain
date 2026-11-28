@@ -1,6 +1,6 @@
 # 0076. The kernel runs apps through declared interfaces, and knows none by name
 
-- Status: Proposed
+- Status: Proposed; amended by ADR-0077 (a catalog's shape; plugins as the managed unit)
 - Date: 2026-11-24
 - Serves: secure RBAC; orchestrate remote MCP
 - Supersedes: ADR-0075 (on acceptance)
@@ -144,23 +144,31 @@ questions:
 |---|---|---|---|
 | **Contract plugins** | implementations of a contract the kernel consumes (conversations, tasks, files) | the operator, in `plugins` | yes, as part of the platform; a workspace cannot remove one |
 | **Catalog plugins** | tools, skills and screens a tenant or vendor offers to all of its workspaces | the operator, by attaching a catalog with a policy | as its catalog's policy says |
-| **Workspace plugins** | connectors one workspace installs from any catalog or by URL | the workspace | no |
+| **Workspace plugins** | plugins one workspace installs from an `available` catalog | the workspace | no |
 
 **The operator attaches catalogs, each with a policy**:
 
 ```json
 "catalogs": [
-  { "source": "https://catalog.example-vendor.com", "policy": "required" },
-  { "source": "nimblebrain", "policy": "available" }
+  { "source": "https://catalog.example-vendor.com/ai-catalog.json",
+    "policy": "required", "sha256": "…" },
+  { "source": "https://catalog.nimblebrain.ai/ai-catalog.json", "policy": "available" }
 ]
 ```
 
-- `required`: every plugin in the catalog is installed in every workspace, including
+- `source` is a listing URL or a path the operator mounts; `sha256` pins the
+  listing, and a `required` catalog must carry one.
+
+- `required`: every item in the catalog is installed in every workspace, including
   each workspace created later, and a workspace cannot remove it.
-- `available`: the catalog's plugins are offered to install, as every catalog is
+- `available`: the catalog's items are offered to install, as every catalog is
   today.
 - Catalogs sit side by side: a vendor's own catalog beside NimbleBrain's catalog of
   business tools and any other.
+
+**Whatever a catalog lists installs as a plugin**, the one unit the runtime manages, with
+a record of what it produced ([ADR-0077](./0077-everything-installed-from-a-catalog-is-a-plugin-and-its-record-says-what-it-owns.md)). A connector added by URL and a person's own skill are
+theirs, not plugins; a system plugin is bound in `plugins` and never comes from a catalog.
 
 **Policy decides presence, not authorization.** A required plugin's tools, skills and
 screens are present in every workspace. A plugin that needs each person to sign in to
