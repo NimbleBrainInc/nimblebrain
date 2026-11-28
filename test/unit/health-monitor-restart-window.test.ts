@@ -42,6 +42,45 @@ function crashedSource(closed: Promise<void>) {
 }
 
 describe("a restart in flight is not a deliberate stop", () => {
+  it("does not start after an outside stop during the restart's stop", async () => {
+    const { closed, release } = gate();
+    const { source, internal } = crashedSource(closed);
+    const start = spyOn(source, "start");
+
+    const restarting = source.restart();
+    const stopping = source.stop();
+    release();
+    expect(await restarting).toBe(false);
+    await stopping;
+
+    expect(start).not.toHaveBeenCalled();
+    expect(internal.client).toBeNull();
+    expect(source.isStopped()).toBe(true);
+    start.mockRestore();
+  });
+
+  it("closes a connection established after an outside stop during restart start", async () => {
+    const { source, internal } = crashedSource(Promise.resolve());
+    const { closed: started, release: markStarted } = gate();
+    const { closed: continueStart, release: releaseStart } = gate();
+    source.start = async () => {
+      markStarted();
+      await continueStart;
+      internal.stopped = false;
+      internal.client = stub<Client>({ close: () => Promise.resolve() });
+      internal.transport = stub<Transport>({ close: () => Promise.resolve() });
+    };
+
+    const restarting = source.restart();
+    await started;
+    await source.stop();
+    releaseStart();
+
+    expect(await restarting).toBe(false);
+    expect(internal.client).toBeNull();
+    expect(source.isStopped()).toBe(true);
+  });
+
   it("test_is_stopped_is_false_while_a_restart_is_in_flight", async () => {
     const { closed, release } = gate();
     const { source, internal } = crashedSource(closed);

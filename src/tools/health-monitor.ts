@@ -274,6 +274,13 @@ export class HealthMonitor {
 
     await sleep(delay);
 
+    // A disconnect can land during the backoff. Its source is terminal even
+    // though this check admitted it before sleeping.
+    if (record.source.isStopped()) {
+      record.state = "dead";
+      return;
+    }
+
     // Remote sources reconnect via a transport stop+start cycle; in-process
     // sources restart their linked server pair.
     const ok = remote ? await this.reconnectRemote(record.source) : await record.source.restart();
@@ -282,8 +289,8 @@ export class HealthMonitor {
       record.state = "healthy";
       this.emitConnectorEvent(record, "connector.recovered", remote);
     } else {
-      // Restart failed — check again on next cycle (might hit max)
-      record.state = "restarting";
+      // A stop during the cycle is terminal; only a failed reconnect retries.
+      record.state = record.source.isStopped() ? "dead" : "restarting";
     }
   }
 

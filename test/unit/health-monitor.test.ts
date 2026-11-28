@@ -66,6 +66,21 @@ function eventNames(collector: { events: EngineEvent[] }): string[] {
 }
 
 describe("HealthMonitor", () => {
+  it("does not restart a source disconnected during backoff", async () => {
+    const source = makeMockSource("disconnected-connector");
+    source.alive = false;
+    const sink = makeEventCollector();
+    const monitor = new HealthMonitor(() => [source], sink, { baseDelayMs: 1 });
+
+    const checking = monitor.check();
+    source.userStopped = true;
+    await checking;
+
+    expect(source.restartCalls).toBe(0);
+    expect(monitor.getStatus()[0]?.state).toBe("dead");
+    expect(eventNames(sink)).not.toContain("connector.recovered");
+  });
+
   it("detects crashed subprocess and restarts it", async () => {
     const source = makeMockSource("test-connector");
     const sink = makeEventCollector();
