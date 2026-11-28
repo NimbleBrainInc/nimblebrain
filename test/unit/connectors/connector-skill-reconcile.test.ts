@@ -195,6 +195,24 @@ describe("reconcileConnectorSkills", () => {
     expect(skillsLockOf(cap.persisted[0]!.connectors[0]!)?.[0]?.server).toBe("com.dropbox/mcp");
   });
 
+  it("never manages a plugin's connection: its skills come from its record", async () => {
+    const owned: ConnectorRef = {
+      ...connector({ url: "https://api.dropbox.test/mcp", serverName: "com-dropbox-mcp" }),
+      installedBy: "dropbox@nimblebrain",
+    };
+    const { deps, cap } = buildDeps(
+      [{ id: "ws_00079598e311c160", connectors: [owned] }],
+      (server) => [lock(server, PIN)],
+      { byUrl: catalog({ "https://api.dropbox.test/mcp": { id: "com.dropbox/mcp" } }) },
+    );
+
+    const result = await reconcileConnectorSkills(deps);
+
+    expect(cap.syncCalls).toEqual([]);
+    expect(cap.persisted).toEqual([]);
+    expect(result.connectorsRefreshed).toBe(0);
+  });
+
   it("moves a connector-skills lock onto the catalog: re-resolves its server and replaces the lock", async () => {
     // A lock from the connector-skills repo records a derived identity and a git
     // tag, never a registry name or a catalog pin. The tag never equals the pin,

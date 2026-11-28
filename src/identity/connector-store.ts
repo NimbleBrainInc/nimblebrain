@@ -163,6 +163,30 @@ export class IdentityConnectorStore {
   }
 
   /**
+   * Rewrite the connector with the given `serverName` in place, keeping its
+   * position. `fn` sees the stored ref; returning null leaves the record
+   * untouched. Returns whether a ref was rewritten.
+   */
+  replace(
+    userId: string,
+    serverName: string,
+    fn: (ref: ConnectorRef) => ConnectorRef | null,
+  ): Promise<boolean> {
+    return serializePerPerson(userId, async () => {
+      const { connectors, plugins } = await this.#read(userId);
+      const i = connectors.findIndex((r) => serverNameFromRef(r) === serverName);
+      const current = connectors[i];
+      if (!current) return false;
+      const next = fn(current);
+      if (!next) return false;
+      const updated = [...connectors];
+      updated[i] = next;
+      await this.#write(userId, updated, plugins);
+      return true;
+    });
+  }
+
+  /**
    * Remove the connector with the given `serverName`. Returns `true` if one
    * was removed, `false` if no such connector existed (idempotent
    * uninstall — a no-op is not an error).

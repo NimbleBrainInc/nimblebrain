@@ -223,6 +223,7 @@ import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
 import { type BoundServer, startBoundServers, stopBoundServers } from "../plugins/bound-servers.ts";
 import { checkConfiguredPlugins, type ResolvedPlugins } from "../plugins/index.ts";
 import {
+  connectionOf,
   createPluginRecordStore,
   type InstalledPluginRecord,
   type PluginOwner,
@@ -317,6 +318,7 @@ import {
   type WithCredentialRefs,
 } from "../tools/instance-credentials.ts";
 import { McpSource } from "../tools/mcp-source.ts";
+import { adoptExistingInstalls } from "../tools/plugin-adopt.ts";
 import { ungrantedPluginGuidance } from "../tools/plugin-request.ts";
 import { SharedSourceRef, type ToolRegistry } from "../tools/registry.ts";
 import { isReservedResourceScheme, readableRecordTemplates } from "../tools/resource-schemes.ts";
@@ -1513,6 +1515,11 @@ export class Runtime {
       // `_platformSources` (already started by `createPlatformSources`) and reach
       // the user only through the identity door — never `ws_<id>-conversations`.
       const workspaceSources = platformSources.filter((s) => !isIdentitySource(s.name));
+
+      // Adopt connectors a catalog installed before installed-plugin records
+      // existed (ADR-0077), before any starts, so each starts from its
+      // rewritten ref. A no-op with no candidate: no listing or artifact read.
+      await rt.adoptExistingInstalls();
 
       // Phase 3: Start workspace connectors with per-workspace registries
       rt._workspaceSources = workspaceSources;
@@ -4320,12 +4327,16 @@ export class Runtime {
     // Servers with a materialized connector overlay: skip synthesizing their
     // `skill://…/SKILL.md` guidance — the curated overlay supersedes it (and
     // would otherwise double the guidance under two framings). A server "has an
-    // overlay" iff its persisted ref carries a non-empty `skillsLock`.
-    // The lock's shas key the overlay affinity check to the overlay version.
+    // overlay" iff an installed plugin's record lists a skill bound to it, or
+    // (a connector no record names) its persisted ref carries a non-empty
+    // `skillsLock`. The shas key the overlay affinity check to the overlay version.
     const overlayLocks = new Map<string, string>();
     for (const i of this.getConnectorInstancesForWorkspace(wsId)) {
       const lock = i.ref && "skillsLock" in i.ref ? i.ref.skillsLock : undefined;
       if (lock?.length) overlayLocks.set(i.serverName, lock.map((e) => e.sha).join(","));
+    }
+    for (const [serverName, shas] of await this.managedOverlayShas({ kind: "workspace", wsId })) {
+      overlayLocks.set(serverName, shas);
     }
 
     const candidates: string[] = [];
@@ -4389,6 +4400,32 @@ export class Runtime {
     );
     await overlayAffinityCheck;
     return synthesized.flat();
+  }
+
+  /**
+   * The connections `owner`'s installed plugins bind a managed skill to, each
+   * with the shas of those skills: the record's own account of the overlay a
+   * connection has. Unreadable records read as none.
+   */
+  private async managedOverlayShas(owner: PluginOwner): Promise<Map<string, string>> {
+    const out = new Map<string, string[]>();
+    let records: InstalledPluginRecord[] = [];
+    try {
+      records = await this.getPluginRecords().list(owner);
+    } catch {
+      return new Map();
+    }
+    for (const record of records) {
+      for (const skill of record.skills) {
+        const connector = skill.server
+          ? record.connectors.find((c) => c.key === skill.server)
+          : undefined;
+        if (!connector) continue;
+        const serverName = connectionOf(connector);
+        out.set(serverName, [...(out.get(serverName) ?? []), skill.sha]);
+      }
+    }
+    return new Map([...out].map(([k, v]) => [k, v.join(",")]));
   }
 
   /**
@@ -5959,6 +5996,29 @@ export class Runtime {
   ): ConnectorCatalog {
     const base = opts.sharing ?? new ConnectorCatalog(catalogLocation(this.getWorkDir()));
     return owner ? base.forOwner(() => this.installedServerRecords(owner)) : base;
+  }
+
+  /**
+   * The boot reconcile for existing installs (ADR-0077): write a record for
+   * each connector a catalog install made before records existed, where
+   * exactly one listing entry claims it and its verified artifact contains it
+   * (`src/tools/plugin-adopt.ts`). Never throws.
+   */
+  async adoptExistingInstalls(opts: { fetchImpl?: typeof fetch } = {}): Promise<void> {
+    try {
+      const { adopted } = await adoptExistingInstalls({
+        workDir: this.getWorkDir(),
+        workspaces: this.getWorkspaceStore(),
+        records: this.getPluginRecords(),
+        snapshots: () => this._catalogListings.snapshots(),
+        ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      });
+      if (adopted.length > 0) {
+        log.info(`[plugins] adopted ${adopted.length} existing connector(s) into plugins`);
+      }
+    } catch (err) {
+      log.warn(`[plugins] adopting existing installs failed (non-fatal): ${String(err)}`);
+    }
   }
 
   /** The installed-plugin records of every owner (ADR-0077), stored beside each owner's connectors. */

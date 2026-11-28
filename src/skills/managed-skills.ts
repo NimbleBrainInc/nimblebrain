@@ -236,3 +236,40 @@ function safeReadDir(dir: string) {
     return [];
   }
 }
+
+/**
+ * Remove the files in one connection's `connector-skills/<serverName>/` that
+ * no plugin in `keep` owns: what an earlier binding of the connection left
+ * there (a skill written by the zip-scanning resolver, marked with that
+ * plugin's name in its catalog index). A skill whose provenance names a
+ * plugin in `keep` stays, so a skill rewritten in place is never lost and a
+ * skill another installed plugin binds to the same connection is untouched.
+ * Returns the names removed.
+ */
+export function removeUnownedConnectorSkills(args: {
+  roots: ManagedSkillRoots;
+  serverName: string;
+  keep: ReadonlySet<string>;
+}): string[] {
+  const dir = join(args.roots.connectorSkills, args.serverName);
+  const removed: string[] = [];
+  for (const entry of safeReadDir(dir)) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
+    const file = join(dir, entry.name);
+    let owner: string | null = null;
+    try {
+      owner = managedSkillPlugin(parseSkillFile(file, { cap: false })?.manifest.provenance?.source);
+    } catch {
+      owner = null;
+    }
+    if (owner && args.keep.has(owner)) continue;
+    unlinkSync(file);
+    removed.push(entry.name.replace(/\.md$/i, ""));
+  }
+  try {
+    if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
+  } catch {
+    // A directory that cannot be listed or removed holds nothing the loaders read as ours.
+  }
+  return removed;
+}

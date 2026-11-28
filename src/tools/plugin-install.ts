@@ -230,20 +230,23 @@ interface Connected {
 
 const lifecycles = keyedChain();
 
-/** Run one install, uninstall or update of `owner`'s plugins at a time. */
-function oneAtATime<T>(owner: PluginOwner, task: () => Promise<T>): Promise<T> {
+/**
+ * Run one install, uninstall, update or adoption of `owner`'s plugins at a
+ * time: each decides from the owner's records.
+ */
+export function oneAtATime<T>(owner: PluginOwner, task: () => Promise<T>): Promise<T> {
   const key = owner.kind === "workspace" ? `workspace:${owner.wsId}` : `person:${owner.userId}`;
   return lifecycles.run(key, task);
 }
 
 /** Materialize `contents`' skills as managed skills of `owner`. */
-function materializeSkills(
-  runtime: Runtime,
+export function materializeSkills(
+  workDir: string,
   owner: PluginOwner,
   address: string,
   contents: PluginContents,
 ): InstalledPluginSkill[] {
-  const roots = managedSkillRoots(runtime.getWorkDir(), owner);
+  const roots = managedSkillRoots(workDir, owner);
   const now = new Date().toISOString();
   const out: InstalledPluginSkill[] = [];
   for (const skill of contents.skills) {
@@ -346,7 +349,7 @@ async function installPluginNow(
   const connected = await connectAll(ctx, owner, address, contents, records);
   if ("isError" in connected) return connected;
   // Converge first, then write the record: a rerun of a stopped install lands here again.
-  const skills = materializeSkills(ctx.runtime, owner, address, contents);
+  const skills = materializeSkills(ctx.runtime.getWorkDir(), owner, address, contents);
   const record = recordOf(
     entry,
     digest,
@@ -537,7 +540,7 @@ async function updatePluginNow(
   removeSkills(ctx.runtime, owner, record);
   const released = await releaseConnections(ctx, owner, dropped, others);
   if ("isError" in released) return released;
-  const skills = materializeSkills(ctx.runtime, owner, address, contents);
+  const skills = materializeSkills(ctx.runtime.getWorkDir(), owner, address, contents);
   await store.put(
     owner,
     recordOf(entry, digest, contents, skills, record.installedAt, new Date().toISOString()),
