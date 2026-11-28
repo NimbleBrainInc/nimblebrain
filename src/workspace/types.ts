@@ -1,6 +1,7 @@
 import type { ConnectorRef } from "../connectors/runtime/types.ts";
 import type { HookRegistration } from "../hooks/types.ts";
 import type { WorkspaceNotificationsConfig } from "../notifications/config.ts";
+import type { InstalledPluginRecord } from "../plugins/installed/record.ts";
 import type { ModelSlots } from "../runtime/types.ts";
 
 /** Workspace-level member roles. */
@@ -26,6 +27,12 @@ export interface Workspace {
   name: string;
   members: WorkspaceMember[];
   connectors: ConnectorRef[];
+  /**
+   * The plugins installed in this workspace from a catalog, in install order:
+   * each one's installed-plugin record, saying exactly what it produced
+   * (ADR-0077). A connector added by URL has none.
+   */
+  plugins?: InstalledPluginRecord[];
   createdAt: string;
   updatedAt: string;
 

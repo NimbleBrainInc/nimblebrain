@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,7 @@ import {
   warnIfCatalogEmpty,
 } from "../connectors/catalog/catalog.ts";
 import { getNimbleBrainHostMeta } from "../connectors/catalog/host-meta.ts";
+import type { ServerDetail } from "../connectors/catalog/server-detail.ts";
 import type { ConnectorCatalogEntry } from "../connectors/catalog/types.ts";
 import { registerGatewayCredentialProviders } from "../connectors/gateways/transport-credential.ts";
 import { bootAuditComposioAuthConfigs } from "../connectors/providers/composio/auth-config-audit.ts";
@@ -221,6 +222,11 @@ import {
 import { isTaskForbiddenSkillTool } from "../platform/skills/source.ts";
 import { type BoundServer, startBoundServers, stopBoundServers } from "../plugins/bound-servers.ts";
 import { checkConfiguredPlugins, type ResolvedPlugins } from "../plugins/index.ts";
+import {
+  createPluginRecordStore,
+  type InstalledPluginRecord,
+  type PluginRecordStore,
+} from "../plugins/installed/record.ts";
 import type {
   AppStateInfo,
   FocusedAppInfo,
@@ -816,6 +822,12 @@ export class Runtime {
   private _managedConnectorRegistry: ManagedConnectorRegistry | null = null;
   /** The configured catalogs' listings, which Browse reads; see {@link getCatalogListings}. */
   _catalogListings: CatalogListings = noCatalogListings();
+  /** Installed-plugin records, per owner; see {@link getPluginRecords}. */
+  private _pluginRecords: PluginRecordStore | null = null;
+  /** Every owner's records, read once and dropped on a record write; see {@link installedServerRecords}. */
+  private _allPluginRecords: Promise<InstalledPluginRecord[]> | null = null;
+  /** Server records an install in progress connects with, before its record is written. */
+  private _pendingServerRecords: Array<{ address: string; detail: ServerDetail }> = [];
   private _identityProvider: IdentityProvider;
   /** Getter for the current request identity — reads from AsyncLocalStorage. */
   _getIdentity: () => UserIdentity | null = () => null;
@@ -5924,7 +5936,87 @@ export class Runtime {
    * long as the request that opened it.
    */
   getConnectorCatalog(): ConnectorCatalog {
-    return new ConnectorCatalog(catalogLocation(this.getWorkDir()));
+    return new ConnectorCatalog(catalogLocation(this.getWorkDir()), () =>
+      this.installedServerRecords(),
+    );
+  }
+
+  /**
+   * The installed-plugin records of every owner (ADR-0077), stored beside each
+   * owner's connectors. A write through this store drops the runtime's read of
+   * every owner's records, so the connector list sees it on its next read.
+   */
+  getPluginRecords(): PluginRecordStore {
+    if (!this._pluginRecords) {
+      this._pluginRecords = createPluginRecordStore({
+        workspaces: this.getWorkspaceStore(),
+        workDir: this.getWorkDir(),
+        onChange: () => {
+          this._allPluginRecords = null;
+        },
+      });
+    }
+    return this._pluginRecords;
+  }
+
+  /**
+   * The server records installed plugins supplied, every workspace's then every
+   * person's, each owner's in install order: what the connector list reads
+   * ahead of its own records, so an installed connection's placements, hooks,
+   * admin tools and display come from the plugin that supplied it. A server
+   * record is the catalog's, not the owner's, so the list is one for the
+   * instance, as the connector list always has been.
+   */
+  async installedServerRecords(): Promise<Array<{ address: string; detail: ServerDetail }>> {
+    if (!this._allPluginRecords) this._allPluginRecords = this.readAllPluginRecords();
+    const records = await this._allPluginRecords;
+    return [
+      ...records.flatMap((r) =>
+        r.connectors.map((c) => ({ address: r.address, detail: c.server })),
+      ),
+      ...this._pendingServerRecords,
+    ];
+  }
+
+  /**
+   * Run `fn` with `records` visible to the connector list, behind every
+   * installed plugin's: an install connects its servers before it writes its
+   * record (the record comes last), and the connect path reads each server's
+   * placements and declarations from the connector list.
+   */
+  async withPendingServerRecords<T>(
+    records: Array<{ address: string; detail: ServerDetail }>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    this._pendingServerRecords.push(...records);
+    try {
+      return await fn();
+    } finally {
+      this._pendingServerRecords = this._pendingServerRecords.filter((r) => !records.includes(r));
+    }
+  }
+
+  private async readAllPluginRecords(): Promise<InstalledPluginRecord[]> {
+    const out: InstalledPluginRecord[] = [];
+    try {
+      for (const ws of await this.getWorkspaceStore().list()) out.push(...(ws.plugins ?? []));
+      const usersDir = join(this.getWorkDir(), "users");
+      const identity = new IdentityConnectorStore({ workDir: this.getWorkDir() });
+      for (const entry of existsSync(usersDir)
+        ? readdirSync(usersDir, { withFileTypes: true })
+        : []) {
+        if (!entry.isDirectory()) continue;
+        try {
+          out.push(...(await identity.listPlugins(entry.name)));
+        } catch (err) {
+          log.warn(`[plugins] the records of user ${entry.name} cannot be read: ${String(err)}`);
+        }
+      }
+    } catch (err) {
+      log.warn(`[plugins] installed-plugin records cannot be read: ${String(err)}`);
+      this._allPluginRecords = null;
+    }
+    return out;
   }
 
   /**

@@ -320,6 +320,7 @@ export class WorkspaceStore {
         Workspace,
         | "name"
         | "connectors"
+        | "plugins"
         | "skillDirs"
         | "models"
         | "oauthClients"
