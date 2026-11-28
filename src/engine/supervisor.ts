@@ -16,7 +16,7 @@ import {
  * with a synthetic directive instructing the model to stop calling the
  * tool and produce a final response.
  *
- * Three failure modes this catches:
+ * Four failure modes this catches:
  *  - Upstream returns identical 4xx errors on every call (e.g. a tool
  *    whose schema-derived args trigger a deterministic server-side
  *    rejection). The model often retries with cosmetic argument tweaks
@@ -28,8 +28,11 @@ import {
  *    nothing) call after call — either re-asking the same question, or
  *    working through so many rephrasings that the surface plainly does not
  *    hold what is being looked for.
+ *  - The same tool fails at the connection or gateway on many consecutive
+ *    attempts. These failures do not count as repeated tool errors, but a
+ *    separate, higher limit stops one unreachable tool consuming the whole run.
  *
- * How "stuck" is measured — three fingerprints and one counter:
+ * How "stuck" is measured — three fingerprints and two separate counters:
  *
  *  - NON-ADVANCING: (toolName, NONADVANCING, normalized(input)). When
  *    `result._meta` carries `NON_ADVANCING_META_KEY`, the fingerprint ignores
@@ -65,6 +68,11 @@ import {
  *    the "model retries-with-tweaks against a deterministic rejection"
  *    failure mode still trips at N repeats — the canonical case the
  *    supervisor was originally written to catch.
+ *
+ *  - INFRASTRUCTURE: consecutive host-marked transport failures are skipped
+ *    by the fingerprint guard, but trip at three times its repeat limit.
+ *    Any non-infrastructure result resets this streak; it does not reset the
+ *    fingerprint or non-advancing counters.
  *
  * Per-tool isolation: a stuck tool doesn't trip the supervisor on
  * unrelated tools. Reset-on-different-fingerprint preserves legitimate
@@ -171,11 +179,23 @@ export type SupervisorVerdict =
       replacement: ToolResult;
       trippedTool: string;
       consecutiveRepeats: number;
+      consecutiveInfraFailures?: never;
+    }
+  | {
+      type: "synth";
+      replacement: ToolResult;
+      trippedTool: string;
+      consecutiveRepeats?: never;
+      consecutiveInfraFailures: number;
     };
 
 export interface SupervisorSnapshot {
   trippedTools: string[];
   callCounts: Record<string, number>;
+  /** Current per-tool host-marked infrastructure failure streak. */
+  consecutiveInfraSkips: Record<string, number>;
+  /** Infrastructure observations passed through before a trip in this run. */
+  totalInfraSkips: Record<string, number>;
 }
 
 export interface RunSupervisor {
@@ -198,6 +218,8 @@ interface ToolState {
   lastFingerprint: string | null;
   consecutiveRepeats: number;
   totalCalls: number;
+  consecutiveInfraSkips: number;
+  totalInfraSkips: number;
   /** Non-advancing results since the last advancing success, however the input
    *  varied. An error neither increments nor clears this — see
    *  `recordObservation`. */
@@ -213,6 +235,8 @@ interface ToolState {
    *  the model a number its own history contradicts. Null whenever `tripped`
    *  is false. */
   trippedRepeats: number | null;
+  /** The infrastructure streak that tripped this tool, or null for a normal trip. */
+  trippedInfraFailures: number | null;
   /** Canonical input of the call a SUCCESS trip was made of: the one call
    *  `repeatRefusal` refuses. Null for an error or non-advancing trip, and
    *  whenever `tripped` is false. */
@@ -282,6 +306,7 @@ function isAdvancingSuccess(result: ToolResult): boolean {
 
 export function createRunSupervisor(config: SupervisorConfig = {}): RunSupervisor {
   const maxRepeats = config.maxConsecutiveRepeats ?? DEFAULT_MAX_REPEATS;
+  const maxInfraSkips = maxRepeats * 3;
   const textCap = config.fingerprintTextCap ?? DEFAULT_FINGERPRINT_CAP;
   const maxNonAdvancing = config.maxNonAdvancingCalls ?? DEFAULT_MAX_NON_ADVANCING;
 
@@ -294,10 +319,13 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
         lastFingerprint: null,
         consecutiveRepeats: 0,
         totalCalls: 0,
+        consecutiveInfraSkips: 0,
+        totalInfraSkips: 0,
         nonAdvancingCalls: 0,
         tripped: false,
         trippedContent: null,
         trippedRepeats: null,
+        trippedInfraFailures: null,
         trippedInput: null,
       };
       states.set(toolName, s);
@@ -390,6 +418,16 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     };
   }
 
+  function infraReplacement(toolName: string, originalText: string, failures: number): ToolResult {
+    const directive =
+      `[NB supervisor] Tool \`${toolName}\` was withheld from the offered tools after its ` +
+      `connection or gateway failed ${failures} times in a row in this run.\n\n` +
+      `Underlying failure (last call):\n${originalText}\n\n` +
+      `Other tools remain available. Consider an alternative approach or summarize current findings ` +
+      `if no path forward exists.`;
+    return { content: textContent(directive), isError: true };
+  }
+
   /**
    * The replacement for a call to a tool that was ALREADY tripped (its
    * probation — see the file header). Separate from `synthReplacement` because
@@ -421,62 +459,101 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     };
   }
 
+  function infraProbationReplacement(
+    toolName: string,
+    result: ToolResult,
+    originalText: string,
+    failures: number,
+  ): ToolResult {
+    const directive =
+      `[NB supervisor] This call to \`${toolName}\` did not establish that its source can ` +
+      `complete the work, so the tool is still withheld from the offered tools ` +
+      `(after ${failures} consecutive connection or gateway failures earlier in this run).\n\n` +
+      `Underlying output (this call):\n${originalText}\n\n` +
+      `Other tools remain available. Consider an alternative approach or summarize current findings ` +
+      `if no path forward exists.`;
+    return { content: textContent(directive), isError: result.isError === true };
+  }
+
+  function observeTripped(state: ToolState, call: ToolCall, result: ToolResult): SupervisorVerdict {
+    // A tripped tool recovers only on advancing success. An infrastructure
+    // trip needs no content comparison: a successful call proves its source
+    // became reachable, even if the returned text happens to match an error.
+    if (
+      isAdvancingSuccess(result) &&
+      (state.trippedInfraFailures !== null || contentHash(result) !== state.trippedContent)
+    ) {
+      state.tripped = false;
+      state.trippedContent = null;
+      state.trippedRepeats = null;
+      state.trippedInfraFailures = null;
+      state.trippedInput = null;
+      state.consecutiveRepeats = 1;
+      state.nonAdvancingCalls = 0;
+      state.lastFingerprint = fingerprint(call, result);
+      return { type: "pass" };
+    }
+
+    const originalText = extractTextForModel(result.content).trim();
+    if (state.trippedInfraFailures !== null) {
+      return {
+        type: "synth",
+        replacement: infraProbationReplacement(
+          call.name,
+          result,
+          originalText,
+          state.trippedInfraFailures,
+        ),
+        trippedTool: call.name,
+        consecutiveInfraFailures: state.trippedInfraFailures,
+      };
+    }
+    const repeats = state.trippedRepeats ?? state.consecutiveRepeats;
+    return {
+      type: "synth",
+      replacement: probationReplacement(call.name, result, originalText, repeats),
+      trippedTool: call.name,
+      consecutiveRepeats: repeats,
+    };
+  }
+
+  function observeInfraFailure(
+    state: ToolState,
+    call: ToolCall,
+    result: ToolResult,
+  ): SupervisorVerdict {
+    // Keep infrastructure failures out of the fingerprint guard, while a
+    // higher per-tool ceiling bounds a connection that never recovers.
+    // A blip does not clear `consecutiveRepeats` or the non-advancing budget.
+    if (state.consecutiveInfraSkips < maxInfraSkips) {
+      state.totalInfraSkips += 1;
+      return { type: "pass" };
+    }
+    state.tripped = true;
+    state.trippedContent = null;
+    state.trippedRepeats = null;
+    state.trippedInfraFailures = state.consecutiveInfraSkips;
+    state.trippedInput = null;
+    const originalText = extractTextForModel(result.content).trim();
+    return {
+      type: "synth",
+      replacement: infraReplacement(call.name, originalText, state.consecutiveInfraSkips),
+      trippedTool: call.name,
+      consecutiveInfraFailures: state.consecutiveInfraSkips,
+    };
+  }
+
   function observe(call: ToolCall, result: ToolResult): SupervisorVerdict {
     const state = getState(call.name);
     state.totalCalls += 1;
+    const isInfraFailure = result._meta?.[INFRA_ERROR_META_KEY] === true;
+    if (isInfraFailure) state.consecutiveInfraSkips += 1;
+    else state.consecutiveInfraSkips = 0;
 
-    if (state.tripped) {
-      // A tripped tool that ADVANCES has disproved the trip — clear it and let
-      // the real result through (see RECOVERY in the file header). The bar is
-      // deliberately narrow: an error, an infrastructure failure, or a result
-      // the tool itself flagged non-advancing is not evidence the tool works,
-      // and neither is returning the very content it tripped on.
-      //
-      // Checked BEFORE the infrastructure skip below, and that skip still
-      // cannot quietly re-enable a tool: `isAdvancingSuccess` rejects an
-      // infra-flagged result on the flag itself, not merely on `isError`, so
-      // the guarantee does not rest on transport failures happening to be
-      // marked as errors.
-      if (isAdvancingSuccess(result) && contentHash(result) !== state.trippedContent) {
-        state.tripped = false;
-        state.trippedContent = null;
-        state.trippedRepeats = null;
-        state.trippedInput = null;
-        state.consecutiveRepeats = 1;
-        state.nonAdvancingCalls = 0;
-        state.lastFingerprint = fingerprint(call, result);
-        return { type: "pass" };
-      }
-      // Still stuck: dispatch does not refuse a tripped tool (see the file
-      // header), and this call did not advance, whether it ran or was stopped
-      // before reaching the tool. It gets the probation directive and the tool
-      // stays withheld.
-      const originalText = extractTextForModel(result.content).trim();
-      const repeats = state.trippedRepeats ?? state.consecutiveRepeats;
-      return {
-        type: "synth",
-        replacement: probationReplacement(call.name, result, originalText, repeats),
-        trippedTool: call.name,
-        consecutiveRepeats: repeats,
-      };
-    }
-
-    // An infrastructure failure is not evidence about the tool. The guard's
-    // premise is that a repeated identical error means the tool is
-    // deterministically refusing the work — true for a schema rejection, false
-    // for a throttle or a dropped transport, where the call never reached the
-    // tool's logic at all. Counting these disables the tool precisely when
-    // retrying is the correct response, and it trips fast: the ERROR fingerprint
-    // ignores input, so a batch of calls with distinct arguments that all fail
-    // the same infrastructural way collapses to one fingerprint.
-    //
-    // Deliberately does NOT reset `consecutiveRepeats`. A genuine loop
-    // interrupted by a transient blip is still a loop, and letting an
-    // infrastructure error clear the counter would hand a flailing tool an easy
-    // way to never trip. The observation is skipped, not treated as progress.
-    if (result._meta?.[INFRA_ERROR_META_KEY] === true) {
-      return { type: "pass" };
-    }
+    // A prior trip stays in force during transport errors; only an advancing
+    // result can restore the tool to the model's offered set.
+    if (state.tripped) return observeTripped(state, call, result);
+    if (isInfraFailure) return observeInfraFailure(state, call, result);
 
     recordObservation(state, call, result);
 
@@ -486,6 +563,7 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
     state.tripped = true;
     state.trippedContent = contentHash(result);
     state.trippedRepeats = repeats;
+    state.trippedInfraFailures = null;
     // An advancing success can only trip the identical-call streak (it clears
     // the non-advancing budget), so this is the input every call in the streak
     // carried.
@@ -566,6 +644,12 @@ export function createRunSupervisor(config: SupervisorConfig = {}): RunSuperviso
       trippedTools: [...states.entries()].filter(([, s]) => s.tripped).map(([name]) => name),
       callCounts: Object.fromEntries(
         [...states.entries()].map(([name, s]) => [name, s.totalCalls]),
+      ),
+      consecutiveInfraSkips: Object.fromEntries(
+        [...states.entries()].map(([name, s]) => [name, s.consecutiveInfraSkips]),
+      ),
+      totalInfraSkips: Object.fromEntries(
+        [...states.entries()].map(([name, s]) => [name, s.totalInfraSkips]),
       ),
     }),
   };

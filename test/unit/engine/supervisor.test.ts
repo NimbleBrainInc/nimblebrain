@@ -664,15 +664,13 @@ const infraError = (text: string): ToolResult => ({
   _meta: { [INFRA_ERROR_META_KEY]: true },
 });
 
-describe("supervisor — infrastructure errors are excluded from the strike count", () => {
-  it("never trips on repeated infrastructure failures, however many", () => {
-    // The production shape: a batch of writes with DISTINCT arguments, all
-    // refused by a gateway throttle. The ERROR fingerprint ignores input, so
-    // these collapse to one fingerprint. Tripping on the 3rd would disable the
-    // tool for the rest of the run at exactly the moment the correct response
-    // is to retry more slowly.
+describe("supervisor — infrastructure failures have a separate bound", () => {
+  it("gives transient failures room, then withholds a persistently unreachable tool", () => {
+    // Distinct writes refused by a gateway throttle must not trip at the normal
+    // three-repeat threshold. A source still unreachable after nine attempts
+    // must not consume the rest of the run.
     const sup = createRunSupervisor();
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 8; i++) {
       const verdict = sup.observe(
         call("people__log_interaction", { contact_id: `ct_${i}` }),
         infraError('people call failed: {"error":"rate_limited"}'),
@@ -680,6 +678,21 @@ describe("supervisor — infrastructure errors are excluded from the strike coun
       expect(verdict.type).toBe("pass");
     }
     expect(sup.snapshot().trippedTools).toEqual([]);
+    const verdict = sup.observe(
+      call("people__log_interaction", { contact_id: "ct_8" }),
+      infraError("connection unavailable"),
+    );
+    expect(verdict.type).toBe("synth");
+    if (verdict.type === "synth") {
+      expect(verdict.consecutiveInfraFailures).toBe(9);
+      expect("consecutiveRepeats" in verdict).toBe(false);
+      expect(textOf(verdict.replacement)).toMatch(/connection.*unavailable/i);
+      expect(textOf(verdict.replacement)).toContain("withheld");
+      expect(textOf(verdict.replacement)).not.toContain("made no progress");
+    }
+    expect(sup.snapshot().trippedTools).toEqual(["people__log_interaction"]);
+    expect(sup.snapshot().consecutiveInfraSkips.people__log_interaction).toBe(9);
+    expect(sup.snapshot().totalInfraSkips.people__log_interaction).toBe(8);
   });
 
   it("still counts the calls it skips", () => {
@@ -690,6 +703,54 @@ describe("supervisor — infrastructure errors are excluded from the strike coun
       sup.observe(call("svc__write"), infraError("connection closed"));
     }
     expect(sup.snapshot().callCounts.svc__write).toBe(4);
+    expect(sup.snapshot().consecutiveInfraSkips.svc__write).toBe(4);
+    expect(sup.snapshot().totalInfraSkips.svc__write).toBe(4);
+  });
+
+  it("resets the infrastructure streak on a plain error but retains diagnostics", () => {
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 8; i++) {
+      expect(sup.observe(call("svc__op"), infraError("connection closed")).type).toBe("pass");
+    }
+    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("pass");
+    expect(sup.snapshot().consecutiveInfraSkips.svc__op).toBe(0);
+    expect(sup.snapshot().totalInfraSkips.svc__op).toBe(8);
+    for (let i = 0; i < 8; i++) {
+      expect(sup.observe(call("svc__op"), infraError("connection closed")).type).toBe("pass");
+    }
+    expect(sup.snapshot().trippedTools).toEqual([]);
+    expect(sup.observe(call("svc__op"), infraError("connection closed")).type).toBe("synth");
+    expect(sup.snapshot().totalInfraSkips.svc__op).toBe(16);
+  });
+
+  it("tracks unreachable tools independently", () => {
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 8; i++) {
+      sup.observe(call("svc__a"), infraError("connection closed"));
+      sup.observe(call("svc__b"), infraError("connection closed"));
+    }
+    expect(sup.observe(call("svc__a"), infraError("connection closed")).type).toBe("synth");
+    expect(sup.snapshot().trippedTools).toEqual(["svc__a"]);
+    expect(sup.snapshot().consecutiveInfraSkips.svc__b).toBe(8);
+  });
+
+  it("keeps an infrastructure trip withheld until a real success recovers it", () => {
+    const sup = createRunSupervisor();
+    for (let i = 0; i < 9; i++) sup.observe(call("svc__op"), infraError("connection closed"));
+    const probation = sup.observe(call("svc__op"), infraError("connection closed"));
+    expect(probation.type).toBe("synth");
+    expect(sup.snapshot().consecutiveInfraSkips.svc__op).toBe(10);
+    if (probation.type === "synth") {
+      expect(textOf(probation.replacement)).toContain("withheld");
+      expect(textOf(probation.replacement)).not.toContain("made no progress");
+    }
+    expect(sup.snapshot().trippedTools).toEqual(["svc__op"]);
+    // A successful call proves the connection recovered even when its text
+    // happens to match the infrastructure error that tripped the tool.
+    expect(sup.observe(call("svc__op"), textResult("connection closed")).type).toBe("pass");
+    expect(sup.snapshot().trippedTools).toEqual([]);
+    expect(sup.snapshot().consecutiveInfraSkips.svc__op).toBe(0);
+    expect(sup.snapshot().totalInfraSkips.svc__op).toBe(8);
   });
 
   it("does not let an infrastructure error launder a genuine loop", () => {
@@ -702,7 +763,12 @@ describe("supervisor — infrastructure errors are excluded from the strike coun
     // A blip in the middle — skipped, and NOT progress.
     expect(sup.observe(call("svc__op"), infraError("connection closed")).type).toBe("pass");
     // The third real rejection still trips.
-    expect(sup.observe(call("svc__op"), textResult("Invalid params", true)).type).toBe("synth");
+    const verdict = sup.observe(call("svc__op"), textResult("Invalid params", true));
+    expect(verdict.type).toBe("synth");
+    if (verdict.type === "synth") {
+      expect(verdict.consecutiveRepeats).toBe(3);
+      expect("consecutiveInfraFailures" in verdict).toBe(false);
+    }
   });
 
   it("keeps a tool disabled once tripped, even if a later call fails on the transport", () => {
