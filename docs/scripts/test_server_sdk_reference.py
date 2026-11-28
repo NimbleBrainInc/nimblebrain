@@ -36,7 +36,7 @@ def _package(tmp_path: Path, source: str) -> Path:
     module_dir = package_dir / "src" / reference.PACKAGE
     module_dir.mkdir(parents=True)
     (package_dir / "pyproject.toml").write_text(
-        '[project]\nname = "fixture"\nversion = "1.2.3"\n'
+        '[project]\nname = "fixture"\nversion = "1.2.3"\n', encoding="utf-8"
     )
     (module_dir / "__init__.py").write_text(source, encoding="utf-8")
     return package_dir

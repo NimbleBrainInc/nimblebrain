@@ -257,7 +257,8 @@ def main(
     The defaults are the SDK and the docs site. A test passes a fixture package and a
     temporary directory.
     """
-    version = tomllib.loads((package_dir / "pyproject.toml").read_text())["project"]["version"]
+    pyproject = (package_dir / "pyproject.toml").read_text(encoding="utf-8")
+    version = tomllib.loads(pyproject)["project"]["version"]
     package = _load(package_dir)
     problems: list[str] = []
     out.mkdir(parents=True, exist_ok=True)
