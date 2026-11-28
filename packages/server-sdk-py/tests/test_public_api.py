@@ -103,7 +103,19 @@ def test_all_is_unchanged() -> None:
         }
         | SERVER_CARD
         | HOST_RESOURCES
+        | HOST_CONTEXT
     )
+
+
+#: Reading the host context a call carries.
+HOST_CONTEXT = {
+    "HOST_CONTEXT_META_KEY",
+    "HostContext",
+    "Principal",
+    "host_context",
+    "is_host",
+    "read_host_context",
+}
 
 
 #: The Server Card a server serves under its MCP path.
@@ -143,6 +155,8 @@ def test_wire_constants() -> None:
         "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
     )
     assert sdk.HOST_META_KEY == "ai.nimblebrain/host"
+    assert sdk.HOST_CONTEXT_META_KEY == "ai.nimblebrain/context"
+    assert typing.get_args(sdk.Principal) == ("host", "person")
     assert sdk.PREVIEW_CHARS == 200
     assert rows.ELLIPSIS == "…"
     assert sdk.FACET_LEVELS == ("critical", "warning", "info")
@@ -216,6 +230,22 @@ def test_annotations() -> None:
         (sdk.preview_text, [("text", POS, E), ("chars", POS, 200)]),
         (sdk.new_ulid, []),
         (sdk.new_prefixed_id, [("prefix", POS, E)]),
+        (sdk.read_host_context, [("meta", POS, E)]),
+        (sdk.host_context, [("ctx", POS, E)]),
+        (sdk.is_host, [("context", POS, E)]),
+        (
+            sdk.HostContext,
+            [
+                ("principal", KW, E),
+                ("workspace_id", KW, None),
+                ("owner_id", KW, None),
+                ("conversation_id", KW, None),
+                ("run_id", KW, None),
+                ("grant", KW, None),
+                ("unattended", KW, None),
+                ("now", KW, None),
+            ],
+        ),
         (testing.served_skills, [("mcp", POS, E), ("mode", POS, "auto")]),
         (testing.served_facets, [("mcp", POS, E), ("mode", POS, "auto")]),
         (

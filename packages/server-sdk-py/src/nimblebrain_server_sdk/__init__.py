@@ -1,6 +1,7 @@
 """The SDK for building MCP servers that run on NimbleBrain.
 
-What a server shares with the host it runs in: the tool annotation hints, the change
+What a server shares with the host it runs in: the host context a call carries (who is calling
+and the scope it is walled to), the tool annotation hints, the change
 announcement its views re-read on, the platform extensions (facets, lifecycle handlers, the
 view a record opens in), skills served through the MCP Skills extension
 (``io.modelcontextprotocol/skills``), the bounded row a listing returns, the opaque record id it
@@ -32,6 +33,14 @@ from nimblebrain_server_sdk.extensions.lifecycle import (
 from nimblebrain_server_sdk.extensions.platform import PlatformExtension, add_platform_extension
 from nimblebrain_server_sdk.extensions.views import RECORD_VIEW_META, record_view_meta
 from nimblebrain_server_sdk.host import HostResources, host
+from nimblebrain_server_sdk.host_context import (
+    HOST_CONTEXT_META_KEY,
+    HostContext,
+    Principal,
+    host_context,
+    is_host,
+    read_host_context,
+)
 from nimblebrain_server_sdk.ids import new_prefixed_id, new_ulid
 from nimblebrain_server_sdk.methods import (
     HOST_RESOURCES_CAPABILITY_KEY,
@@ -63,6 +72,7 @@ __all__ = [
     "CHANGES",
     "FACETS_EXTENSION_ID",
     "FACET_LEVELS",
+    "HOST_CONTEXT_META_KEY",
     "HOST_META_KEY",
     "HOST_RESOURCES_CAPABILITY_KEY",
     "HOST_RESOURCES_LIST_METHOD",
@@ -82,12 +92,14 @@ __all__ = [
     "ErrorContractMiddleware",
     "FacetLevel",
     "HostCapabilityMissing",
+    "HostContext",
     "HostResources",
     "LifecycleEvent",
     "LifecycleExtension",
     "MCPServerSkillsExtension",
     "Placement",
     "PlatformExtension",
+    "Principal",
     "SkillDefinition",
     "SkillsExtension",
     "add_error_contract",
@@ -99,11 +111,14 @@ __all__ = [
     "facet_count",
     "facet_meta",
     "host",
+    "host_context",
+    "is_host",
     "lifecycle_meta",
     "listing_row",
     "new_prefixed_id",
     "new_ulid",
     "preview_text",
+    "read_host_context",
     "record_view_meta",
 ]
 

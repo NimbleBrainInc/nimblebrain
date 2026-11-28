@@ -26,7 +26,9 @@ const meta = (context: unknown) => ({ [HOST_CONTEXT_META_KEY]: context });
 
 /**
  * Values at `params._meta["ai.nimblebrain/context"]`. A reader in any language is held to the
- * schema with fixtures like these: it reads what the schema accepts, and nothing else.
+ * schema with fixtures like these: it reads what the schema accepts, and nothing else. The Python
+ * reader's suite (`packages/server-sdk-py/tests/test_host_context.py`) holds the same list, each
+ * with its verdict, so a fixture added here is added there.
  */
 const FIXTURES: unknown[] = [
   { principal: "host" },

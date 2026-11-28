@@ -11,7 +11,9 @@ It covers four things:
   `params._meta["ai.nimblebrain/context"]` (`contracts/host-context/CONTEXT.md`). The reader
   accepts exactly what `schemas/host-context/v1/host-context.schema.json` accepts and reads
   anything else as no context; its tests hold it to the schema with shared fixtures, so a
-  reader in any language can be checked the same way.
+  reader in any language can be checked the same way. The Python reader
+  (`nimblebrain_server_sdk.host_context`) is held to the same list in
+  `packages/server-sdk-py/tests/test_host_context.py`: add a fixture to both.
 - **Tool errors**: `toolError`, `ToolCallError`, the `{ code, error }` result every contract
   uses.
 - **The principal rule and the contract document**: `refuseUnlessAllowed` refuses a private tool
