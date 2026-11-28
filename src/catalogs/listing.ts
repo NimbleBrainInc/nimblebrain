@@ -39,6 +39,9 @@ export const PLUGIN_TYPES = ["application/agent-plugins+zip", "application/agent
 /** A connector listed on its own: inline `data` is its MCP Registry `server.json` record (ADR-0077). */
 export const SERVER_RECORD_TYPE = "application/vnd.nimblebrain.server+json";
 
+/** A skill listed on its own: an Agent Skills zip, or one `SKILL.md`. */
+export const SKILL_TYPES = ["application/agent-skills+zip", "application/agent-skills+md"];
+
 /** One listed item, as the host reads it. */
 export interface ListedEntry {
   /** The catalog it came from. */
@@ -56,6 +59,8 @@ export interface ListedEntry {
   url?: string;
   /** Whether the entry carries its artifact inline. */
   inline: boolean;
+  /** The inline artifact, when the entry carries one: what install verifies against `digest`. */
+  data?: unknown;
   digest?: string;
   iconUrl?: string;
   category?: string;
@@ -169,6 +174,7 @@ function readEntry(catalog: string, raw: unknown): ListedEntry | string {
     ...(e.tags && e.tags.length > 0 ? { tags: e.tags } : {}),
     ...(e.url !== undefined ? { url: e.url } : {}),
     inline: e.data !== undefined,
+    ...(e.data !== undefined ? { data: e.data } : {}),
     ...(e.digest !== undefined ? { digest: e.digest } : {}),
     ...(extension.iconUrl ? { iconUrl: extension.iconUrl } : {}),
     ...(category ? { category } : {}),
