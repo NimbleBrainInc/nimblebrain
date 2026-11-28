@@ -76,7 +76,8 @@ How to run it standalone is in `README.md`.
 ## Transfers (`src/transfer.ts`)
 
 - **A transfer URL is `<origin>/t/<id>.<secret>`**: a 128-bit id finds the grant and a 256-bit
-  secret is compared in constant time. Grants live in memory: a restart kills every URL, an
+  secret is compared in constant time as the text issued, never decoded: base64 decoding
+  ignores unused low bits and padding, so another spelling would pass. Grants live in memory: a restart kills every URL, an
   open upload then expires and a host resolves again.
 - **The listener**: over stdio, its own `Bun.serve` bound to `127.0.0.1` on a port the OS
   picks, started before the server answers; over HTTP, the server's own origin under `/t/`
@@ -95,7 +96,10 @@ How to run it standalone is in `README.md`.
   same window. Past the window an upload is retired with its bytes: on the next
   call into its workspace, and every minute for a loaded workspace.
 - **A download GET re-checks the record**: a file deleted since its URL was issued is 404.
-- **The per-file limit** for `begin_upload` is `--max-file-bytes` (default 25 MiB).
+- **The per-file limit** for `begin_upload` is `--max-file-bytes`, else `NB_FILES_MAX_FILE_BYTES`,
+  else 25 MiB. The variable is a launch convention, not part of the contract: the runtime's
+  files binding sets it to the operator's `files.maxFileSize` when it starts the server, so the
+  host's intake and `begin_upload` refuse at one size.
 
 ## Extraction (`src/extract.ts`)
 

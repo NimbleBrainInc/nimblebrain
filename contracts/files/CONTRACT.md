@@ -295,7 +295,8 @@ from it at once after the `resolve` that answered it, under the caller's context
 
 **A local implementation** (one the host starts over stdio) serves its URLs from an HTTP
 listener bound to a loopback address, on a port it chooses, started with the server. The
-listener answers only `GET` of a live download token and `PUT` of a live upload token, and
+listener answers only `GET` of a live download token and `PUT` of a live upload token, each
+exactly as issued (a different spelling that decodes to the same secret is not the token), and
 answers every other request alike, with 404. It binds `127.0.0.1` or `::1` explicitly, never
 `0.0.0.0` or `::`; compares tokens in constant time; keeps tokens out of its access logs; and
 sends no CORS headers. An implementation the host reaches by URL serves its URLs from its own

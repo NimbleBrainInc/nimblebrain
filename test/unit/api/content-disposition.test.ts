@@ -30,10 +30,20 @@ describe("servedType", () => {
     expect(servedType("image/png")).toBe("image/png");
   });
 
+  test("an allowlisted type keeps its parameters: it is judged bare (CONTRACT.md §5)", () => {
+    expect(servedType("text/plain;charset=utf-8")).toBe("text/plain;charset=utf-8");
+    expect(servedType(" Text/Markdown; charset=UTF-8 ")).toBe("Text/Markdown; charset=UTF-8");
+  });
+
   test("anything else is octet-stream, and so is a type that would break the header", () => {
     expect(servedType("text/javascript")).toBe("application/octet-stream");
+    expect(servedType("text/javascript; charset=utf-8")).toBe("application/octet-stream");
     expect(servedType("text/plain\r\nSet-Cookie: x")).toBe("application/octet-stream");
-    expect(servedType("text/plain; charset=utf-8")).toBe("application/octet-stream");
+    expect(servedType("text/plain; charset=utf-8\r\nSet-Cookie: x")).toBe(
+      "application/octet-stream",
+    );
+    expect(servedType('text/plain; charset="utf-8"')).toBe("application/octet-stream");
+    expect(servedType("text/plain; charset")).toBe("application/octet-stream");
   });
 });
 

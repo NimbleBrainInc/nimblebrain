@@ -13,6 +13,7 @@
  */
 
 import { log } from "../observability/log.ts";
+import { ContractToolError } from "../plugins/bound-servers.ts";
 import type { FilesHost, OwnerScope } from "./host.ts";
 import { humanSize } from "./human-size.ts";
 import { bareType, GENERIC_BINARY, IMAGE_TYPES, isAllowedType, PDF_TYPE } from "./mime.ts";
@@ -73,9 +74,16 @@ export interface IntakeMeta {
   description?: string;
 }
 
-/** An intake that failed past its checks: the transfer or the plugin refused. Its message is safe to show. */
+/**
+ * An intake that failed past its checks. Its message is safe to show.
+ * `unavailable` when the plugin did not refuse the file but was not reached
+ * (not running, restarting, a transfer cut off): the same file may be sent again.
+ */
 export class IntakeError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly unavailable = false,
+  ) {
     super(message);
     this.name = "IntakeError";
   }
@@ -92,21 +100,27 @@ async function begin(host: FilesHost, scope: OwnerScope, file: IntakeBody, meta:
   });
 }
 
-/** Why an intake step failed, for the uploader: the plugin's code, never a URL. */
+/**
+ * Why an intake step failed, for the uploader: the plugin's code, never a URL.
+ * A failure without one is the plugin not reached, not a refusal.
+ */
 function failure(file: IntakeBody, err: unknown): IntakeError {
   const code = (err as { code?: unknown })?.code;
+  const refused = err instanceof ContractToolError;
   const why =
     code === "too_large"
       ? "is larger than the files plugin accepts"
       : code === "type_not_allowed"
         ? "has a type the files plugin does not accept"
-        : "could not be stored";
+        : refused
+          ? "could not be stored"
+          : "could not be stored now; try again";
   log.warn("[files] intake failed", {
     filename: file.filename,
     code: typeof code === "string" ? code : "transfer",
     error: err instanceof Error ? err.name : "unknown",
   });
-  return new IntakeError(`File "${file.filename}" ${why}`);
+  return new IntakeError(`File "${file.filename}" ${why}`, !refused);
 }
 
 /** Take one file in: begin, stream, complete. */

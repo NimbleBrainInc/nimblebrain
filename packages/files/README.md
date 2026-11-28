@@ -52,7 +52,7 @@ when it does. The origin transfer URLs name is the listener's own unless
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--max-file-bytes <n>` | 26214400 | the largest upload `begin_upload` accepts |
+| `--max-file-bytes <n>` | `$NB_FILES_MAX_FILE_BYTES`, else 26214400 (25 MiB) | the largest upload `begin_upload` accepts |
 | `--upload-ttl <s>` | 900 | how long an upload URL lives (at most 900) |
 | `--download-ttl <s>` | 300 | how long a download URL lives (at most 300) |
 | `--screen <file>` | `ui/dist/index.html` | the screen's built HTML |
